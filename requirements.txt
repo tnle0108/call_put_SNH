@@ -1,0 +1,17 @@
+numpy
+pandas
+scipy
+pyarrow
+duckdb
+pyreadstat
+openpyxl
+pyyaml
+tqdm
+statsmodels
+matplotlib
+ipython
+ipykernel
+jupyterlab
+nbformat
+nbconvert
+pytest
