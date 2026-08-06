@@ -108,8 +108,9 @@ class _FactorTree:
 
     a: float
     sigma: float
-    dt: float
-    n_steps: int
+    # dt: float
+    # n_steps: int
+    times: np.ndarray #debug
 
     def __post_init__(self) -> None:
         # Hull's band is where branching switches to up/down to keep p in [0, 1]: at
@@ -121,34 +122,102 @@ class _FactorTree:
         # band is unreachable from the root and costs O(n^2) in pjoint for nothing.
         # Within the reachable cone |j| <= i the clip never binds, so capping leaves
         # every reachable node's probabilities untouched.
-        hull = np.inf if self.a <= 0 else np.ceil(0.184 / (self.a * self.dt))
-        self.j_max = max(int(min(hull, self.n_steps)), 1)
-        self.dx = self.sigma * np.sqrt(3.0 * self.dt)
-        self.levels = np.arange(-self.j_max, self.j_max + 1)
-        self.n = self.levels.size
+        self.dt = np.diff(self.times)
+        self.n_steps = len(self.dt)
+
+        # dt_min = self.dt.min()
+
+        # if self.a <= 0:
+        #     hull = np.inf
+        # else:
+        #     hull = np.ceil(0.184 / (self.a * dt_min))
+
+        # self.j_max = max(int(min(hull, self.n_steps)), 1)
+        # self.levels = np.arange(-self.j_max, self.j_max + 1)
+        # self.n = self.levels.size
+        #debug
+        self.levels = []
+        self.child_idx=[]
+        self.central = []
+        self.pu=[]
+        self.pm=[]
+        self.pd=[]
+        self.n = []
+        self.dx = []
+
+        for i in range(len(self.times)):
+            if i == len(self.times)-1:
+                dt = self.dt[-1]
+            else:
+                dt = self.dt[i]
+
+            dx = self.sigma * np.sqrt(3.0 * dt)
+            self.dx.append(dx)
+
+            # band width
+            if self.a <= 0:
+                j_max = self.n_steps
+            else:
+                hull = np.ceil(0.184/(self.a*dt))
+                j_max = int(max(min(hull,self.n_steps),1))
+
+            levels = np.arange(-j_max, j_max+1)
+
+            self.levels.append(levels)
+            self.n.append(levels.size)
+
+            # Hull branching
+            raw = np.round(levels * (1.0 - self.a * dt)).astype(int)
+            
+            central = np.clip(raw, -(j_max - 1), j_max - 1)
+            self.central.append(central)
+
+            m = (levels*(1-self.a*dt) - central)
+            pu = (1.0 + 3.0 * m**2 + 3.0 * m) / 6.0
+            pd = (1.0 + 3.0 * m**2 - 3.0 * m) / 6.0
+            pm = 1.0 - pu - pd
+
+            self.pu.append(pu)
+            self.pm.append(pm)
+            self.pd.append(pd)
+
+            offset = j_max
+
+            child = np.stack(
+                [
+                    central + 1 + offset,
+                    central + offset,
+                    central - 1 + offset,
+                ],
+                axis=1,
+            )  # shape (n, 3)
+            self.child_idx.append(child)
+
+        #debug
 
         # Central child (absolute level) and (u, m, d) probabilities per node.
-        raw = np.round(self.levels * (1.0 - self.a * self.dt)).astype(int)
-        self.central = np.clip(raw, -(self.j_max - 1), self.j_max - 1)
-        m = self.levels * (1.0 - self.a * self.dt) - self.central
-        self.pu = (1.0 + 3.0 * m**2 + 3.0 * m) / 6.0
-        self.pd = (1.0 + 3.0 * m**2 - 3.0 * m) / 6.0
-        self.pm = 1.0 - self.pu - self.pd
+        # raw = np.round(self.levels * (1.0 - self.a * self.dt)).astype(int)
+        # self.central = np.clip(raw, -(self.j_max - 1), self.j_max - 1)
+        # m = self.levels * (1.0 - self.a * self.dt) - self.central
+        # self.pu = (1.0 + 3.0 * m**2 + 3.0 * m) / 6.0
+        # self.pd = (1.0 + 3.0 * m**2 - 3.0 * m) / 6.0
+        # self.pm = 1.0 - self.pu - self.pd
 
-        # Child indices (into levels) for the up/mid/down branches of each node.
-        off = self.j_max
-        self.child_idx = np.stack(
-            [
-                self.central + 1 + off,
-                self.central + off,
-                self.central - 1 + off,
-            ],
-            axis=1,
-        )  # shape (n, 3)
+        # # Child indices (into levels) for the up/mid/down branches of each node.
+        # off = self.j_max
+        # self.child_idx = np.stack(
+        #     [
+        #         self.central + 1 + off,
+        #         self.central + off,
+        #         self.central - 1 + off,
+        #     ],
+        #     axis=1,
+        # )  # shape (n, 3)
 
-    def x(self, j_level: int) -> float:
-        return j_level * self.dx
-
+    # def x(self, j_level: int) -> float:
+    #     return j_level * self.dx
+    def x(self, step, level):
+        return (level *  self.dx[step])
 
 @dataclass
 class MultiCurveHWTree:
@@ -176,40 +245,73 @@ class MultiCurveHWTree:
     rho: float
     disc_curve: YieldCurve
     ref_curve: YieldCurve
-    dt: float
-    n_steps: int
+    # dt: float
+    # n_steps: int
+    times: np.ndarray #debug
 
     def __post_init__(self) -> None:
         if not -1.0 <= self.rho <= 1.0:
             raise ValueError("rho must be in [-1, 1]")
-        if self.dt <= 0 or self.n_steps < 1:
-            raise ValueError("dt > 0 and n_steps >= 1 required")
-        self.times = np.arange(self.n_steps + 1) * self.dt
-        self.xt = _FactorTree(self.a_r, self.sigma_r, self.dt, self.n_steps)
-        self.yt = _FactorTree(self.a_L, self.sigma_L, self.dt, self.n_steps)
+        # self.times = np.arange(self.n_steps + 1) * self.dt
+        self.times=np.asarray(self.times)
+        if self.times[0]!=0:
+            raise ValueError("Times must start at 0")
+        self.n_steps=len(self.times)-1 #debug
+        if self.n_steps < 1:
+            raise ValueError("n_steps >= 1 required")
+        # self.dt_steps=np.diff(self.times) 
+        # self.xt = _FactorTree(self.a_r, self.sigma_r, self.dt, self.n_steps)
+        self.xt = _FactorTree(self.a_r, self.sigma_r, self.times) #debug
+        # self.yt = _FactorTree(self.a_L, self.sigma_L, self.dt, self.n_steps)
+        self.yt = _FactorTree(self.a_L, self.sigma_L, self.times) #debug
         self._build_joint_probs()
         self._assign_rates()
 
-    def _build_joint_probs(self) -> None:
-        nx, ny = self.xt.n, self.yt.n
-        px = np.stack([self.xt.pu, self.xt.pm, self.xt.pd], axis=1)
-        py = np.stack([self.yt.pu, self.yt.pm, self.yt.pd], axis=1)
-        eps = self.rho / 36.0
-        M = _M_POS if self.rho >= 0 else _M_NEG
-        shift = eps * M
+    # def _build_joint_probs(self) -> None:
+    #     nx, ny = self.xt.n, self.yt.n
+    #     px = np.stack([self.xt.pu, self.xt.pm, self.xt.pd], axis=1)
+    #     py = np.stack([self.yt.pu, self.yt.pm, self.yt.pd], axis=1)
+    #     eps = self.rho / 36.0
+    #     M = _M_POS if self.rho >= 0 else _M_NEG
+    #     shift = eps * M
 
-        self.pjoint = np.empty((nx, ny, 3, 3))
-        for jx in range(nx):
-            for ky in range(ny):
-                p0 = np.outer(px[jx], py[ky])
-                lam = 1.0
-                neg = shift < 0
-                if np.any(neg):
-                    lam = min(1.0, np.min(p0[neg] / -shift[neg]))
-                p = p0 + lam * shift
-                p = np.clip(p, 0.0, 1.0)
-                p /= p.sum()
-                self.pjoint[jx, ky] = p
+    #     self.pjoint = np.empty((nx, ny, 3, 3))
+    #     for jx in range(nx):
+    #         for ky in range(ny):
+    #             p0 = np.outer(px[jx], py[ky])
+    #             lam = 1.0
+    #             neg = shift < 0
+    #             if np.any(neg):
+    #                 lam = min(1.0, np.min(p0[neg] / -shift[neg]))
+    #             p = p0 + lam * shift
+    #             p = np.clip(p, 0.0, 1.0)
+    #             p /= p.sum()
+    #             self.pjoint[jx, ky] = p
+    def _build_joint_probs(self):
+        self.pjoint=[]
+        for i in range(self.n_steps):
+            px = np.stack([self.xt.pu[i], self.xt.pm[i], self.xt.pd[i]],axis=1)
+            py = np.stack([self.yt.pu[i], self.yt.pm[i], self.yt.pd[i]],axis=1)
+            nx = len(px)
+            ny = len(py)
+            step_prob = np.empty((nx,ny,3,3))
+            eps = self.rho/36
+            M = (_M_POS if self.rho>=0 else _M_NEG)
+            shift = eps*M
+
+            for jx in range(nx):
+                for ky in range(ny):
+                    p0 = np.outer(px[jx], py[ky])
+                    lam = 1
+                    neg = shift<0
+                    if np.any(neg):
+                        lam=min(1, np.min(p0[neg]/(-shift[neg])))
+                    p = p0 + lam * shift
+                    p = np.clip(p, 0, 1)
+                    p /= p.sum()
+                    step_prob[jx,ky] = p
+
+            self.pjoint.append(step_prob)
 
     def _assign_rates(self) -> None:
         """Affine node rates for the discount leg, ``r_i(x) = c[i] + slope[i] * x``.
@@ -219,18 +321,39 @@ class MultiCurveHWTree:
         ``step_discount[i] = exp(-r[i] * dt)`` rather than the rate itself.
         """
         N = self.n_steps
-        x_vals = self.xt.levels * self.xt.dx
-        self.c = np.zeros(N)
-        self.slope = np.zeros(N)
-        self.r = [None] * N
+        self.c = []
+        self.slope = []
+        self.r = []
         self.step_discount = []
 
         for i in range(N):
-            self.c[i], self.slope[i] = _affine_rate(
-                self.disc_curve, self.a_r, self.sigma_r, self.times[i], self.dt
+            dt = self.times[i+1] - self.times[i]
+            c,slope = _affine_rate(
+                self.disc_curve,
+                self.a_r,
+                self.sigma_r,
+                self.times[i],
+                dt
             )
-            self.r[i] = self.c[i] + self.slope[i] * x_vals
-            self.step_discount.append(np.exp(-self.r[i] * self.dt))
+            self.c.append(c)
+            self.slope.append(slope)
+            x_values = (self.xt.levels[i] * self.xt.dx[i])
+            rates = (c + slope*x_values)
+            self.r.append(rates)
+            self.step_discount.append(np.exp( - rates * dt))
+
+        # x_vals = self.xt.levels * self.xt.dx
+        # self.c = np.zeros(N)
+        # self.slope = np.zeros(N)
+        # self.r = [None] * N
+        # self.step_discount = []
+
+        # for i in range(N):
+        #     self.c[i], self.slope[i] = _affine_rate(
+        #         self.disc_curve, self.a_r, self.sigma_r, self.times[i], self.dt
+        #     )
+        #     self.r[i] = self.c[i] + self.slope[i] * x_vals
+        #     self.step_discount.append(np.exp(-self.r[i] * self.dt))
 
     def short_rates(self, i: int):
         """(levels, period rates) at step ``i``; mirrors ``HullWhiteTree.short_rates``."""
@@ -247,7 +370,7 @@ class MultiCurveHWTree:
         c, slope = _affine_rate(
             self.ref_curve, self.a_L, self.sigma_L, self.times[i], tenor
         )
-        R = c + slope * (self.yt.levels * self.yt.dx)
+        R = c + slope * (self.yt.levels[i]*self.yt.dx[i])
         return np.expm1(R * tenor) / tenor
 
     def _coupon_amounts(self, i: int, bond: BondSpec, flags: PricingFlags):
@@ -261,7 +384,7 @@ class MultiCurveHWTree:
             )
             rate = self.reference_rate(i, tenor) + cdef.margin
         else:
-            rate = np.full(self.yt.n, cdef.fixed_rate)
+            rate = np.full(self.yt.n[i],cdef.fixed_rate)
         if flags.floor and cdef.floor is not None:
             rate = np.maximum(rate, cdef.floor)
         if flags.cap and cdef.cap is not None:
@@ -279,21 +402,47 @@ class MultiCurveHWTree:
         N = bond.maturity_step
         if N > self.n_steps:
             raise ValueError("bond.maturity_step exceeds n_steps")
-        nx, ny = self.xt.n, self.yt.n
-        xc, yc = self.xt.child_idx, self.yt.child_idx  # (nx,3), (ny,3)
+        nx=self.xt.n[N]
+        ny=self.yt.n[N]
+        # nx, ny = self.xt.n, self.yt.n
+        # xc, yc = self.xt.child_idx, self.yt.child_idx  # (nx,3), (ny,3)
 
         cpn_N = self._coupon_amounts(N, bond, flags)
         V = bond.face + np.zeros((nx, ny)) + np.broadcast_to(cpn_N, (nx, ny))
 
         for i in range(N - 1, -1, -1):
-            D_i = self.step_discount[i]  # (nx,) depends on x only
-            cont = np.zeros((nx, ny))
+            xc=self.xt.child_idx[i]
+            yc=self.yt.child_idx[i]
+            # prob=self.pjoint[i]
+
+            D_i = self.step_discount[i]
+
+            nx=len(self.xt.levels[i])
+            ny=len(self.yt.levels[i])
+
+            cont=np.zeros((nx,ny))
+
+            xc=self.xt.child_idx[i]
+            yc=self.yt.child_idx[i]
+
             for a in range(3):
-                xi = xc[:, a]  # (nx,) child x-index per node
+                xi=xc[:,a]
                 for b in range(3):
-                    yi = yc[:, b]  # (ny,)
-                    cont += self.pjoint[:, :, a, b] * V[np.ix_(xi, yi)]
-            cont *= D_i[:, None]
+                    yi=yc[:,b]
+
+                    cont += (self.pjoint[i][:,:,a,b] * V[np.ix_(xi,yi)])
+
+            cont *= D_i[:,None]
+
+
+            # D_i = self.step_discount[i]  # (nx,) depends on x only
+            # cont = np.zeros((nx, ny))
+            # for a in range(3):
+            #     xi = xc[:, a]  # (nx,) child x-index per node
+            #     for b in range(3):
+            #         yi = yc[:, b]  # (ny,)
+            #         cont += self.pjoint[:, :, a, b] * V[np.ix_(xi, yi)]
+            # cont *= D_i[:, None]
 
             if exercise is not None:
                 if flags.call and i in exercise.call:
@@ -303,8 +452,10 @@ class MultiCurveHWTree:
 
             cpn = self._coupon_amounts(i, bond, flags)
             V = cont + np.broadcast_to(cpn, (nx, ny))
+            root_x=len(self.xt.levels[0])//2
+            root_y=len(self.yt.levels[0])//2
 
-        return float(V[self.xt.j_max, self.yt.j_max])  # root: x=0, y=0
+        return float(V[root_x,root_y])  # root: x=0, y=0
 
     def decompose(
         self, bond: BondSpec, exercise: ExerciseSpec | None = None

@@ -1,4 +1,5 @@
-from quantmr import config, schedule, utils, curve, leg, ratederivative
+# from quantmr import config, schedule, utils, curve, leg, ratederivative
+from quantmr import utils
 
 
 __version__ = "0.1.0"
