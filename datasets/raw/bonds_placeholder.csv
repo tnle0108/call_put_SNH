@@ -1,3 +1,4 @@
-bond_id,face,issue_date,maturity_date,call_exercise_dates,put_exercise_dates,call_strike,put_strike,coupon_accrual,annual_coupon_rate,ref_curve,ref_tenor,margin_date,margin,floor,cap,style,group
-BOND_BERM_02,100,6/24/2024,6/24/2026,2025-12-31;2026-03-31;2026-06-30;2026-09-30,2025-12-31;2026-03-31;2026-06-30;2026-09-30,96;96;98;99,100;101;101;102,0.25,0.04,,,2025-12-31;2026-03-31,0.3;0.35,,,Bermudan,FB
-BOND_EUR_01,100,6/24/2024,6/24/2026,9/30/2025,,99,,0.25,,zc_vnd_irs,0.08,2025-08-30;2026-02-25,0.2;0.25,0.02,,European,LB_G1
+﻿bond_id,face,issue_date,maturity_date,call_exercise_dates,put_exercise_dates,call_strike,put_strike,coupon_accrual,annual_coupon_rate,ref_curve,ref_tenor,margin_date,margin,floor,cap,style,group
+VIBL2431010 (new_1),100,12/18/2024,12/18/2031,12/18/2026,, 100;100 , 100;100 ,1,,SOB4,12M,12/18/2029,0.028;0.038,,,European,LB_G2
+HDBL2427028_new1,100,12/24/2024,12/24/2027,12/24/2026,12/24/2026,100,100,1,0.057,,,,,,,European,LB_G3
+CTG12506_new,100,6/20/2025,6/20/2033,6/20/2028,,100,100,1,,SOB4,12M,6/20/2030,0.015;0.028,,,European,LB_G1

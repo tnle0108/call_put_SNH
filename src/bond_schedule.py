@@ -58,10 +58,10 @@ def adjust_following(date, holidays):
     return date
 
 
-def build_times(convention, issue_date, coupon_dates, call_dates = None, put_dates = None):
+def build_times(convention, issue_date, coupon_dates, maturity_date, call_dates = None, put_dates = None):
     call_dates = call_dates or []
     put_dates = put_dates or []
-    dates=[issue_date, *coupon_dates, *call_dates, *put_dates]
+    dates=[issue_date,maturity_date, *coupon_dates, *call_dates, *put_dates]
     dates=sorted(set(dates))
     times=[]
 
@@ -74,10 +74,10 @@ def build_times(convention, issue_date, coupon_dates, call_dates = None, put_dat
 
     return np.array(times)
 
-def build_times_normal(issue_date, coupon_dates, call_dates = None, put_dates = None):
+def build_times_normal(issue_date, coupon_dates,maturity_date, call_dates = None, put_dates = None):
     call_dates = call_dates or []
     put_dates = put_dates or []
-    dates=[issue_date, *coupon_dates, *call_dates, *put_dates]
+    dates=[issue_date,maturity_date, *coupon_dates, *call_dates, *put_dates]
     dates=sorted(set(dates))
     times=[]
 
@@ -94,6 +94,7 @@ class CouponSchedule:
     def build_coupon_schedule_df(self) -> pd.DataFrame:
         rows = []
         for _, bond in self.df.iterrows():
+            print(bond['bond_id'])
             issue_date = pd.to_datetime(bond["issue_date"])
             maturity_date = pd.to_datetime(bond["maturity_date"])
 
@@ -122,10 +123,13 @@ class CouponSchedule:
                 if is_fixed:
                     margin = np.nan
                 else:
+                    print(margin_values)
                     margin = margin_values[0]
-                    for d, m in zip(margin_dates, margin_values):
+                    for i, d in enumerate(margin_dates):
                         if pay_date >= d:
-                            margin = m
+                            margin = margin_values[i + 1]
+                        else:
+                            break
                 rows.append(
                     {
                         "bond_id": bond["bond_id"],
@@ -171,7 +175,7 @@ class CouponSchedule:
                     accrual=accrual,
                     fixed_rate=None,
                     margin=float(s["margin"]),
-                    ref_tenor=float(s["ref_tenor"]),#debug
+                    ref_tenor=str(s["ref_tenor"]),#debug
                     floor=s["floor"] if pd.notna(s["floor"]) else None,
                     cap=s["cap"] if pd.notna(s["cap"]) else None,
                 )

@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 from quantmr.utils.helpers import (
     align_arr,
     norm_str,
@@ -91,3 +92,33 @@ class DayCount:
         if key not in cls.DAYCOUNT_CACHE:
             cls.DAYCOUNT_CACHE[key] = cls(convention)
         return cls.DAYCOUNT_CACHE[key]
+
+
+
+def tenor_to_yearfrac(
+        tenor: str,
+        convention: str,
+        start_date: np.datetime64 | pd.Timestamp,
+):
+
+    maturity_dates=[]
+    if tenor.endswith("Y"):
+        n = int(tenor[:-1])
+        maturity_dates.append(start_date + pd.DateOffset(years=n))
+    elif tenor.endswith("M"):
+        n = int(tenor[:-1])
+        maturity_dates.append(start_date + pd.DateOffset(months=n))
+    elif tenor.endswith("N"):
+        n = 1
+        maturity_dates.append(start_date + pd.DateOffset(days=n))
+    elif tenor.endswith("W"):
+        n = int(tenor[:-1])
+        maturity_dates.append(start_date + pd.DateOffset(weeks=n))
+    else:
+        raise ValueError(f"Unsupported tenor: {tenor}")
+    start = np.array([start_date] * len(maturity_dates), dtype="datetime64[D]")
+    end = np.array(maturity_dates, dtype="datetime64[D]")
+
+    yf = DayCount.get(convention).yearfrac(start, end)
+    return yf
+

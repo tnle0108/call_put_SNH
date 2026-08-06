@@ -5,9 +5,11 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from .curve import YieldCurve
+from .daycount import tenor_to_yearfrac
 
 _M_POS = np.array([[5.0, -4.0, -1.0], [-4.0, 8.0, -4.0], [-1.0, -4.0, 5.0]])
 _M_NEG = np.array([[1.0, 4.0, -5.0], [4.0, -8.0, 4.0], [-5.0, 4.0, 1.0]])
+REF_CONVENTION = 'actactisda'
 
 
 def _B(a: float, tau: float) -> float:
@@ -60,7 +62,7 @@ class CouponDef:
     accrual: float
     fixed_rate: float | None = None
     margin: float = 0.0
-    ref_tenor: float | None = None
+    ref_tenor: str | None = None
     floor: float | None = None
     cap: float | None = None
 
@@ -111,6 +113,7 @@ class _FactorTree:
     # dt: float
     # n_steps: int
     times: np.ndarray #debug
+    times_normal: np.ndarray
 
     def __post_init__(self) -> None:
         # Hull's band is where branching switches to up/down to keep p in [0, 1]: at
@@ -245,9 +248,12 @@ class MultiCurveHWTree:
     rho: float
     disc_curve: YieldCurve
     ref_curve: YieldCurve
+    disc_convention: str
+    ref_convention: str
     # dt: float
     # n_steps: int
     times: np.ndarray #debug
+    times_normal: np.ndarray
 
     def __post_init__(self) -> None:
         if not -1.0 <= self.rho <= 1.0:
@@ -261,9 +267,9 @@ class MultiCurveHWTree:
             raise ValueError("n_steps >= 1 required")
         # self.dt_steps=np.diff(self.times) 
         # self.xt = _FactorTree(self.a_r, self.sigma_r, self.dt, self.n_steps)
-        self.xt = _FactorTree(self.a_r, self.sigma_r, self.times) #debug
+        self.xt = _FactorTree(self.a_r, self.sigma_r, self.times, self.times_normal, self.disc_convention) #debug
         # self.yt = _FactorTree(self.a_L, self.sigma_L, self.dt, self.n_steps)
-        self.yt = _FactorTree(self.a_L, self.sigma_L, self.times) #debug
+        self.yt = _FactorTree(self.a_L, self.sigma_L, self.times, self.times_normal) #debug
         self._build_joint_probs()
         self._assign_rates()
 
@@ -379,9 +385,11 @@ class MultiCurveHWTree:
         if cdef is None:
             return 0.0
         if cdef.is_float:
-            tenor = (
-                cdef.ref_tenor if cdef.ref_tenor is not None else cdef.accrual
-            )
+            if cdef.ref_tenor is not None:
+                ref_tenor_year_frac = tenor_to_yearfrac(cdef.ref_tenor, REF_CONVENTION,self.times_normal[i])
+            else:
+                ref_tenor_year_frac = cdef.accrual
+            tenor = ref_tenor_year_frac
             rate = self.reference_rate(i, tenor) + cdef.margin
         else:
             rate = np.full(self.yt.n[i],cdef.fixed_rate)
@@ -400,6 +408,7 @@ class MultiCurveHWTree:
         """Present value today (dirty) of the bond via one backward induction."""
         flags = flags or PricingFlags()
         N = bond.maturity_step
+        print(N)
         if N > self.n_steps:
             raise ValueError("bond.maturity_step exceeds n_steps")
         nx=self.xt.n[N]

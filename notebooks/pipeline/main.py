@@ -22,8 +22,6 @@ CURVE_DATA_PATH = root / "datasets" / "raw" / "Histocopy_FI_ZYC_VND_GD2_family.x
 RAW_PATH = root/'datasets'/'raw'
 _HOLIDAY = Path.cwd().parents[1] / "datasets" / "holidays"
 
-START_DATE = pd.to_datetime("2024-06-24")
-END_DATE = pd.to_datetime("2026-07-30")
 REPORT_DATE = pd.to_datetime("2026-06-03")
 
 DISC_CONVENTION = "actactisda"
@@ -35,43 +33,6 @@ COUP_CONVENTION = "act365"
 bond_df = pd.read_csv(BOND_DATA_PATH)
 bond_df["issue_date"] = pd.to_datetime(bond_df["issue_date"])
 bond_df["maturity_date"] = pd.to_datetime(bond_df["maturity_date"])
-
-
-def normalize_date_list(value):
-    if pd.isna(value) or str(value).strip() == "":
-        return value
-
-    dates = [
-        pd.to_datetime(x.strip(), format="mixed").strftime("%Y-%m-%d")
-        for x in str(value).split(";")
-    ]
-    return ";".join(dates)
-
-bond_df["call_exercise_dates"] = bond_df["call_exercise_dates"].apply(normalize_date_list)
-bond_df["put_exercise_dates"] = bond_df["put_exercise_dates"].apply(normalize_date_list)
-
-bond_df["exercise_dates"] = (
-    bond_df["call_exercise_dates"].fillna("").astype(str)
-    + ";"
-    + bond_df["put_exercise_dates"].fillna("").astype(str)
-).str.strip(";")
-
-exercise_dates_by_bond = {
-    row["bond_id"]: [
-        pd.to_datetime(d.strip())
-        for d in str(row["exercise_dates"]).split(";")
-        if d.strip()
-    ]
-    for _, row in bond_df.iterrows()
-}
-
-# Fallback if exercise date file is not present
-def get_exercise_dates_for_bond(bond_id: str):
-    if bond_id in exercise_dates_by_bond:
-        return exercise_dates_by_bond[bond_id]
-    return []
-#%%
-
 groups = ["LB_G1", "LB_G2", "LB_G3", "LB_G4", "NBFI", "FB"]
 
 dfs = {}
@@ -79,8 +40,6 @@ curves = {}
 ref_curves = {}
 
 daycount = DayCount.get(DISC_CONVENTION)
-
-
     
 #%%
 holiday_calendar = load_holiday_calendar(_HOLIDAY)
@@ -108,10 +67,9 @@ for _, row in bond_df.iterrows():
     ref_curve_name = (None if pd.isna(row["ref_curve"]) else str(row["ref_curve"]).strip().lower())
     print(ref_curve_name)
     style = str(row['style']).strip().lower()
+    maturity_date = pd.to_datetime(row['maturity_date'])
 
     group = str(row["group"]).strip() if "group" in row and pd.notna(row["group"]) else None
-    # if group not in curves:
-    #     raise ValueError(f"Group {group} not found in curves.")
 
     if pd.notna(row["call_exercise_dates"]) and str(row["call_exercise_dates"]).strip():
         call_dates = [pd.to_datetime(x.strip(), format = 'mixed') for x in str(row["call_exercise_dates"]).split(";")]
@@ -130,7 +88,6 @@ for _, row in bond_df.iterrows():
     print('put_dates:', put_dates)
     print('call_dates:', call_dates)
 
-    # disc_curve = map_disc_curve(group)
     disc_curve = MapCurve(
         rpd=REPORT_DATE,
         curve_folder=str(RAW_PATH),
@@ -159,28 +116,15 @@ for _, row in bond_df.iterrows():
         DISC_CONVENTION,
         issue_date,
         coupon_dates,
+        maturity_date,
         call_dates,
         put_dates,
     )
 
-    # def to_step(call_date, times):
-    #     idx = np.where(times == call_date)[0]
-    #     if len(idx) == 0:
-    #         raise ValueError(f"{call_date} không có trong times")
-    #     return idx[0]
-
-    # def to_step(call_date, times):
-    #     return list(times).index(call_date)
-    
-    # def to_step(date):
-    #     date = pd.Timestamp(date).normalize()
-    #     t = (date - issue_date.normalize()).days / 365.0
-    #     return int(round(t / dt))
-
-
     times_normal = build_times_normal(
         issue_date,
         coupon_dates,
+        maturity_date,
         call_dates,
         put_dates,
     )
@@ -207,6 +151,7 @@ for _, row in bond_df.iterrows():
         disc_curve=disc_curve,
         ref_curve=ref_curve,
         times=times,
+        times_normal = times_normal,
     )
 
     maturity_step = len(times) - 1
