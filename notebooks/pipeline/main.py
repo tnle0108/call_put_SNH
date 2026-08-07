@@ -85,6 +85,20 @@ for _, row in bond_df.iterrows():
         put_dates = []
         put_strikes = []
 
+
+    def to_step(date, times):
+        idx = np.where(times == date)[0]
+        if len(idx) == 0:
+            raise ValueError(f"{date} không có trong times")
+        return int(idx[0])
+
+    call = {to_step(d, times_normal): s
+            for d, s in zip(call_dates, call_strikes)}
+
+    put = {to_step(d, times_normal): s
+        for d, s in zip(put_dates, put_strikes)}
+
+    
     print('put_dates:', put_dates)
     print('call_dates:', call_dates)
 

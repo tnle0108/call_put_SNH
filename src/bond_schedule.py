@@ -6,11 +6,17 @@ import sys
 from datetime import timedelta
 from dataclasses import dataclass
 from pathlib import Path
+from datetime import date
+from dateutil.relativedelta import relativedelta
 
 sys.path.insert(0, str(Path.cwd().parents[0]))
 
 from src.daycount import DayCount
 from src.multi_hw_tree import CouponDef
+from callput import (
+    BondSchedule,
+    CouponPeriod,
+)
 
 #%%
 # _PACKAGE_SRC = Path(__file__).resolve().parents[1]
@@ -183,3 +189,102 @@ class CouponSchedule:
                 raise ValueError(f"Unsupported coupon_type={coupon_type}")
 
         return coupon_map
+    def bulid_reset_schedule(self):
+        rows = []
+        for _, bond in self.df.iterrows():
+            issue_date = pd.to_datetime(bond["issue_date"])
+            maturity_date = pd.to_datetime(bond["maturity_date"])
+            months = int(bond['ref_tenor'][:-1])
+            reset_dates = pd.date_range(
+                start = issue_date,
+                end = maturity_date,
+                freq = pd.DateOffset(months = months),
+            )
+            holidays = self.holiday_calendar.get(self.country, set())
+            reset_dates = [
+                pd.Timestamp(adjust_following(d, holidays))
+                for d in reset_dates
+            ]
+
+            if reset_dates and reset_dates[-1] == maturity_date:
+                reset_dates = reset_dates[:-1]
+
+            rows.append(reset_dates)
+
+        return rows
+
+def days(d:date, start_date:date) -> int:
+    return(d-start_date).days
+
+def build(
+        reading: str,
+        face: float,
+        maturity_date: pd.Timestamp,
+        coupon_accrual: float,
+        coupon_schedule_df: pd.DataFrame,
+        ref_dates: list[date] | None = None,
+        call_df: pd.DataFrame | None = None,
+        put_df: pd.DataFrame | None = None,
+        fixed_rate: float | None = None,
+) -> BondSchedule:
+    pays = coupon_schedule_df["pay_date"].sort_values().tolist()
+    months = round(coupon_accrual * 12)
+    first_start = pays[0] - relativedelta(months=months)
+    starts = [first_start] + pays[:-1]
+    resets = ref_dates or []
+
+    is_floating = fixed_rate is None
+    if is_floating:
+        margin_map = coupon_schedule_df.set_index('pay_date')['margin']
+        floor_map = coupon_schedule_df.set_index('pay_date')['floor']
+
+    periods = []
+    for pay, start in zip(pays, starts):
+        accrual = (pay - start).days / 365.0
+
+        # fixed-rate bond, hoặc kỳ đầu của floating bond chưa có fixing
+        if not is_floating or pay <= resets[0]:
+            periods.append(
+                CouponPeriod(
+                    pay_day=days(pay),
+                    accrual=accrual,
+                    accrual_start_day=days(start),
+                    fixed_rate=fixed_rate,
+                )
+            )
+            continue
+
+        if reading == 'advance':
+            fixing = max(r for r in resets if r < pay)
+        else:
+            fixing = max(r for r in resets if r <= pay)
+
+        periods.append(
+            CouponPeriod(
+                pay_day=days(pay),
+                accrual=accrual,
+                accrual_start_day=days(start),
+                fixing_day=days(fixing),
+                ref_tenor_days=365,
+                margin=margin_map[pay],
+                floor=floor_map[pay],
+            )
+        )
+        call = (
+            {days(d): s for d, s in zip(call_df['call_date'], call_df['call_strike'])}
+            if call_df is not None and not call_df.empty
+            else {}
+        )
+        put = (
+            {days(d): s for d, s in zip(put_df['put_date'], put_df['put_strike'])}
+            if put_df is not None and not put_df.empty
+            else {}
+        )
+    return BondSchedule(
+        face = face,
+        maturity_day = days(maturity_date),
+        periods=periods,
+        call = call,
+        put = put,
+    )
+

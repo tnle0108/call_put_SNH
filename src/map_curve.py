@@ -63,9 +63,11 @@ class MapCurve:
         )
         return curve
 
-    def map_ref_curve(self, ref_curve_name: str):
+
+
+    def map_curve(self, curve_name: str):
         df = pd.read_csv(
-            os.path.join(self.curve_folder,f'{ref_curve_name}.csv'),
+            os.path.join(self.curve_folder,f'{curve_name}.csv'),
             index_col=0,
         )
 
