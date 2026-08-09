@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path.cwd().parents[0]))
 
 from src.daycount import DayCount
 from src.multi_hw_tree import CouponDef
-from src.curve import YieldCurve
+from callput import YieldCurve
 
 
 @dataclass
