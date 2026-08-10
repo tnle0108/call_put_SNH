@@ -274,6 +274,7 @@ def compile_bond(
 
     late = sorted(d for d in events if d > sched.maturity_day)
     if late:
+        print(late)
         raise ValueError(f"event days after maturity: {late}")
 
     days = build_day_grid(events, step_days=step_days, min_step=min_step)

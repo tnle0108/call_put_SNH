@@ -1,6 +1,5 @@
 #%%
 import pandas as pd
-import numpy as np
 import sys
 import os
 import json
@@ -10,13 +9,12 @@ from pathlib import Path
 print(sys.path.insert(0, str(Path.cwd().parents[1])))
 
 from callput import (
-    YieldCurve,
     CallPutTree,
     CurveLeg,
     compile_bond,
 )
 from src.map_curve import MapCurve
-from src.bond_schedule import CouponSchedule, load_holiday_calendar, build
+from src.bond_schedule import CouponSchedule, load_holiday_calendar, build, adjust_following
 #%%
 root = Path.cwd().resolve().parent.parent
 
@@ -38,7 +36,7 @@ STEP_DAYS = float(21)
 MIN_STEP_DAYS = float(3)
 RHO = 0.02
 #%%
-bond_df = pd.read_csv(os.path.join(BOND_FOLDER_PATH, 'bonds_placeholder.csv'))
+bond_df = pd.read_csv(os.path.join(BOND_FOLDER_PATH, 'bonds_placeholder - Copy.csv'))
 disc_df = pd.read_csv(os.path.join(CURVE_FOLDER_PATH, f'{DISC_NAME}.csv'))
 ref_df = pd.read_csv(os.path.join(CURVE_FOLDER_PATH, f'{REF_NAME}.csv'))
 
@@ -62,13 +60,14 @@ def legs(
         CurveLeg(ref, a_L, sigma_L, ref_conv),
     )
 
-
 def make_tree(sched, step_days=STEP_DAYS, **kw):
     bond = compile_bond(sched, step_days=step_days, min_step=MIN_STEP_DAYS)
     disc, ref = legs(**kw)
     if ref is None:
         return bond, CallPutTree.single_curve(bond, disc)
     return bond, CallPutTree.multi_curve(bond, disc, ref, rho=RHO)
+
+#%%
 
 disc_curve = MapCurve(
     rpd = VALUE_DATE,
@@ -98,32 +97,28 @@ coupon_schedule_df = CouponSchedule(
 ).build_coupon_schedule_df()
 
 
-
-
-coupon_map = CouponSchedule(
-    df=bond_df,
-    holiday_calendar=holiday_calendar,
-    country ='vnd'
-).build_coupon_map_from_schedule(bond_df.iloc[0])
+#%%
+results = []
 
 for _, row in bond_df.iterrows():
     bond_id = str(row['bond_id'])
+    print(bond_id)
     issue_date = pd.to_datetime(row['issue_date'])
     ref_curve_name = (None if pd.isna(row['ref_curve']) else str(row['ref_curve']).strip().lower())
-    maturity_date = pd.to_datetime(row['maturity_date'])
+    maturity_date = adjust_following(pd.to_datetime(row['maturity_date']), holiday_calendar)
     coupon_accrual = float(row['coupon_accrual'])
     face_value = float(row['face'])
 
     if pd.notna(row["call_exercise_dates"]) and str(row["call_exercise_dates"]).strip():
         call_dates = [pd.to_datetime(x.strip(), format='mixed') for x in str(row["call_exercise_dates"]).split(";")]
-        call_strikes = [float(x) for x in str(row["call_strike"]).split(";")]
+        call_strikes = [float(x)/face_value for x in str(row["call_strike"]).split(";")]
     else:
         call_dates = []
         call_strikes = []
 
     if pd.notna(row["put_exercise_dates"]) and str(row["put_exercise_dates"]).strip():
         put_dates = [pd.to_datetime(x.strip(), format='mixed') for x in str(row["put_exercise_dates"]).split(";")]
-        put_strikes = [float(x) for x in str(row["put_strike"]).split(";")]
+        put_strikes = [float(x)/face_value for x in str(row["put_strike"]).split(";")]
     else:
         put_dates = []
         put_strikes = []
@@ -136,15 +131,6 @@ for _, row in bond_df.iterrows():
         "put_date": pd.Series(put_dates, dtype="datetime64[ns]"),
         "put_strike": pd.Series(put_strikes, dtype="float64"),
     })
-
-    coupon_dates = (
-        coupon_schedule_df.loc[
-            coupon_schedule_df["bond_id"] == row["bond_id"],
-            "pay_date",
-        ]
-        .sort_values()
-        .tolist()
-    )
 
     if ref_curve_name is not None:
         ref_curve = MapCurve(
@@ -167,8 +153,8 @@ for _, row in bond_df.iterrows():
         a_L = 0.0
         sigma_L = 0.0
 
-    # ---- helpers gói tham số lặp lại, tránh lỗi lệch vị trí ----
-    def build_sched(reading, _row=row, _call_df=call_df, _put_df=put_df):
+    # -------------------------------------------------------------
+    def build_sched(reading, apply_floor=True, apply_cap=True, _row=row, _call_df=call_df, _put_df=put_df):
         return build(
             reading=reading,
             rpd=VALUE_DATE,
@@ -183,6 +169,8 @@ for _, row in bond_df.iterrows():
             ref_curve_name=ref_curve_name,
             curve_folder=str(CURVE_FOLDER_PATH),
             ref_convention=REF_CONVENTION,
+            apply_floor=apply_floor,
+            apply_cap=apply_cap,
         )
 
     def make_tree_for_bond(sched, step_days=STEP_DAYS, **bump_kw):
@@ -203,6 +191,9 @@ for _, row in bond_df.iterrows():
 
     sched = build_sched('advance')
     bond, tree = make_tree_for_bond(sched)
+    full_price = tree.price()
+
+
     step = bond.step_days()
     for w in bond.warnings:
         print(f'warning:{w}')
@@ -224,14 +215,25 @@ for _, row in bond_df.iterrows():
     except ValueError as exc:
         print(f"\nWith the call schedule the arrears reading is refused:\n  {exc}")
 
-    for step_days in (56, 42, 28, 21, 14):
-        _, conv = make_tree_for_bond(sched, step_days=step_days)
-        d = conv.decompose()
+    sched_straight = build_sched('advance', apply_floor=False, apply_cap=False)
+    sched_straight.call = {}
+    sched_straight.put = {}
+    _, tree_straight = make_tree_for_bond(sched_straight)
+    straight_price = tree_straight.price()
 
-    base = tree.price()
-    for bump in (-0.02, -0.01, 0.01, 0.02):
-        _, shocked = make_tree_for_bond(sched, disc_bump=bump, ref_bump=bump)
-        price = shocked.price()    
+    results.append({
+        "bond_id": bond_id,
+        "full_price": full_price,
+        "straight_price": straight_price,
+        "diff": full_price - straight_price,
+    })
+
+    # for step_days in (56, 42, 28, 21, 14):
+    #     _, conv = make_tree_for_bond(sched, step_days=step_days)
+    #     d = conv.decompose()
+
+    # base = tree.price()
+    # for bump in (-0.02, -0.01, 0.01, 0.02):
+    #     _, shocked = make_tree_for_bond(sched, disc_bump=bump, ref_bump=bump)
+    #     price = shocked.price()    
 #%%
-
-
