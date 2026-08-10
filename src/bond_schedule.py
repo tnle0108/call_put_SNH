@@ -137,42 +137,23 @@ class CouponSchedule:
     def build_coupon_schedule_df(self) -> pd.DataFrame:
         rows = []
         for _, bond in self.df.iterrows():
-            print(bond['bond_id'])
             issue_date = pd.to_datetime(bond["issue_date"])
             maturity_date = pd.to_datetime(bond["maturity_date"])
-
             accrual = float(bond["coupon_accrual"])
             months = int(round(accrual * 12))
 
             pay_dates = pd.date_range(
-                start=issue_date,
-                end=maturity_date,
-                freq=pd.DateOffset(months=months),
-            )[1:]       
-
+                start=issue_date, end=maturity_date, freq=pd.DateOffset(months=months),
+            )[1:]
             holidays = self.holiday_calendar.get(self.country, set())
             pay_dates = [adjust_following(d, holidays) for d in pay_dates]
 
-            margin_dates = []
-            margin_values = []
-
-            if pd.notna(bond["margin_date"]) and str(bond["margin_date"]).strip():
-                margin_dates = [pd.to_datetime(x.strip(), format="mixed") for x in str(bond["margin_date"]).split(";")]
-                margin_values = [float(x) for x in str(bond["margin"]).split(";")]
-
             is_fixed = pd.notna(bond["annual_coupon_rate"])
 
+            margin_dates_raw = str(bond["margin_date"]) if pd.notna(bond["margin_date"]) and str(bond["margin_date"]).strip() else None
+            margin_values_raw = str(bond["margin"]) if pd.notna(bond["margin"]) and str(bond["margin"]).strip() else None
+
             for step, pay_date in enumerate(pay_dates, start=1):
-                if is_fixed:
-                    margin = np.nan
-                else:
-                    print(margin_values)
-                    margin = margin_values[0]
-                    for i, d in enumerate(margin_dates):
-                        if pay_date >= d:
-                            margin = margin_values[i + 1]
-                        else:
-                            break
                 rows.append(
                     {
                         "bond_id": bond["bond_id"],
@@ -180,19 +161,15 @@ class CouponSchedule:
                         "pay_date": pay_date,
                         "accrual": accrual,
                         "coupon_type": "fixed" if is_fixed else "float",
-                        "fixed_rate": (
-                            bond["annual_coupon_rate"]
-                            if is_fixed
-                            else np.nan
-                        ),
+                        "fixed_rate": bond["annual_coupon_rate"] if is_fixed else np.nan,
                         "ref_curve": bond["ref_curve"],
                         "ref_tenor": bond["ref_tenor"],
-                        "margin": margin,
+                        "margin_dates_raw": margin_dates_raw,
+                        "margin_values_raw": margin_values_raw,
                         "floor": bond["floor"],
                         "cap": bond["cap"],
                     }
                 )
-
         return pd.DataFrame(rows)
 
 
@@ -249,9 +226,27 @@ class CouponSchedule:
 
         return []
 
+def resolve_margin(margin_dates_raw, margin_values_raw, ref_date):
+    if margin_values_raw is None or pd.isna(margin_values_raw) or not str(margin_values_raw).strip():
+        return None
+    values = [float(x) for x in str(margin_values_raw).split(";")]
+    if margin_dates_raw is None or pd.isna(margin_dates_raw) or not str(margin_dates_raw).strip():
+        return values[0]
+    mdates = [pd.to_datetime(x.strip(), format="mixed") for x in str(margin_dates_raw).split(";")]
+    if len(values) != len(mdates) + 1:
+        raise ValueError(
+            f"margin có {len(values)} giá trị nhưng margin_date có {len(mdates)} mốc"
+        )
+    margin = values[0]
+    for i, d in enumerate(mdates):
+        if ref_date >= d:
+            margin = values[i + 1]
+        else:
+            break
+    return margin
+
 def days(d:date, start_date:date) -> int:
     return(d-start_date).days
-
 def build(
         reading: str,
         rpd: date,
@@ -266,31 +261,29 @@ def build(
         ref_curve_name: str | None = None,
         curve_folder: str | None = None,
         ref_convention: str | None = None,
+        apply_floor: bool = True,
+        apply_cap: bool = True,
 ) -> BondSchedule:
     pays_all = coupon_schedule_df["pay_date"].sort_values().tolist()
     months = round(coupon_accrual * 12)
     first_start_all = pays_all[0] - relativedelta(months=months)
     starts_all = [first_start_all] + pays_all[:-1]
 
-    # Chỉ giữ các kỳ coupon chưa trả (pay_date > rpd)
     future_pairs = [(s, p) for s, p in zip(starts_all, pays_all) if p > rpd]
     if not future_pairs:
-        raise ValueError(
-            f"No future coupon periods after rpd={rpd}"
-        )
+        raise ValueError(f"No future coupon periods after rpd={rpd}")
     starts, pays = map(list, zip(*future_pairs))
 
     resets = ref_dates or []
 
     is_floating = fixed_rate is None
-
     if is_floating:
-        margin_map = coupon_schedule_df.set_index('pay_date')['margin']
+        margin_dates_map = coupon_schedule_df.set_index('pay_date')['margin_dates_raw']
+        margin_values_map = coupon_schedule_df.set_index('pay_date')['margin_values_raw']
         floor_map = coupon_schedule_df.set_index('pay_date')['floor']
         cap_map = coupon_schedule_df.set_index('pay_date')['cap']
         tenor_map = coupon_schedule_df.set_index('pay_date')['ref_tenor']
 
-    
     periods = []
     for pay, start in zip(pays, starts):
         accrual = (pay - start).days / 365.0
@@ -328,11 +321,12 @@ def build(
                     f"Period with fixing {fixing} <= rpd {rpd} requires "
                     f"curve_folder/ref_curve_name/ref_convention to look up the known rate"
                 )
+            margin_known = resolve_margin(margin_dates_map[pay], margin_values_map[pay], fixing)
             known_rate = get_known_rate(
                 ref_curve_name=ref_curve_name,
                 ref_tenor=tenor_map[pay],
                 fixing_date=fixing,
-                margin=margin_map[pay],
+                margin=margin_known,
                 curve_folder=curve_folder,
                 convention=ref_convention,
             )
@@ -351,6 +345,7 @@ def build(
             )
             continue
 
+        margin = resolve_margin(margin_dates_map[pay], margin_values_map[pay], fixing)
         periods.append(
             CouponPeriod(
                 pay_day=days(pay, rpd),
@@ -358,46 +353,27 @@ def build(
                 accrual_start_day=days(start, rpd),
                 fixing_day=days(fixing, rpd),
                 ref_tenor_days=365,
-                margin=nan_to_none(margin_map[pay]) or 0.0,
-                floor=nan_to_none(floor_map[pay]),
-                cap=nan_to_none(cap_map[pay]),
+                margin=margin if margin is not None else 0.0,
+                floor=nan_to_none(floor_map[pay]) if apply_floor else None,
+                cap=nan_to_none(cap_map[pay]) if apply_cap else None,
             )
         )
 
-    # Lọc call/put: chỉ giữ ngày exercise còn ở tương lai (> rpd)
-    if put_df is not None and not put_df.empty:
-        put_df = put_df.copy()
-
-        put_df["put_date"] = pd.to_datetime(
-            put_df["put_date"],
-            errors="coerce"
-        )
-    if call_df is not None and not call_df.empty:
-        call_df = call_df.copy()
-
-        call_df["call_date"] = pd.to_datetime(
-            call_df["call_date"],
-            errors="coerce"
-        )
-
-    dropped_calls = call_df[call_df['call_date'] <= rpd] if call_df is not None else None
+    dropped_calls = call_df[call_df['call_date'] <= rpd] if call_df is not None and not call_df.empty else None
     if dropped_calls is not None and not dropped_calls.empty:
-        print(f"Warning: {len(dropped_calls)} call date(s) already in the past, dropped: {dropped_calls['call_date'].tolist()}")
+        print(f"[{None}] Warning: {len(dropped_calls)} call date(s) already in the past, dropped: {dropped_calls['call_date'].tolist()}")
 
-    dropped_puts = put_df[put_df['put_date'] <= rpd] if put_df is not None else None
+    dropped_puts = put_df[put_df['put_date'] <= rpd] if put_df is not None and not put_df.empty else None
     if dropped_puts is not None and not dropped_puts.empty:
         print(f"Warning: {len(dropped_puts)} put date(s) already in the past, dropped: {dropped_puts['put_date'].tolist()}")
 
-    
     call = (
-        {days(d, rpd): s for d, s in zip(call_df['call_date'], call_df['call_strike'])
-         if d > rpd}
+        {days(d, rpd): s for d, s in zip(call_df['call_date'], call_df['call_strike']) if d > rpd}
         if call_df is not None and not call_df.empty
         else {}
     )
     put = (
-        {days(d, rpd): s for d, s in zip(put_df['put_date'], put_df['put_strike'])
-         if d > rpd}
+        {days(d, rpd): s for d, s in zip(put_df['put_date'], put_df['put_strike']) if d > rpd}
         if put_df is not None and not put_df.empty
         else {}
     )
@@ -409,4 +385,3 @@ def build(
         call=call,
         put=put,
     )
-
