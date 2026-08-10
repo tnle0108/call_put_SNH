@@ -8,6 +8,7 @@ from quantmr.utils import DayCount, KalmanFilter
 
 class HullWhite:
     HULLWHITE_CACHE: dict[str, "HullWhite"] = {}
+    # HULLWHITE_CACHE.clear()
 
     def __init__(
         self,
@@ -377,6 +378,7 @@ class HullWhite:
     ) -> dict:
         from quantmr.curve.zerocurve import ZeroCurve
         from quantmr.curve.curvenode import CurveNode
+        # CurveNode.CURVENODE_CACHE.clear()
 
         if exclude_tenors is None:
             exclude_tenors = ["ON", "1W", "2W"]

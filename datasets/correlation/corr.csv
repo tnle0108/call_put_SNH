@@ -1,4 +1,3 @@
-Corr,zc usd sr,zc vnd ccs sr,zc vnd irs
-zc usd sr,1.0,0.12763288111203655,-0.14634917567257505
-zc vnd ccs sr,0.12763288111203655,1.0,0.4571881137990026
-zc vnd irs,-0.14634917567257505,0.4571881137990026,1.0
+Corr,vbma_bond_fi_shocked_6,sob4_shocked_6
+vbma_bond_fi_shocked_6,1.0,0.09120627263475065
+sob4_shocked_6,0.09120627263475065,1.0

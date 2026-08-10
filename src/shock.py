@@ -14,10 +14,15 @@ class ShockScenario:
     df: pd.DataFrame
 
     map_tenor: ClassVar[dict[str, float]] = {
+        "ON": 1/365,
+        "1W": 1/52, "2W": 2/52,
+        "1M": 1/12, "2M": 2/12,
         "3M": 3/12, "6M": 6/12, "9M": 9/12,
         "1Y": 1.0, "15M": 15/12, "18M": 18/12, "21M": 21/12,
         "2Y": 2.0, "27M": 27/12, "30M": 30/12, "33M": 33/12,
         "3Y": 3.0, "5Y": 5.0,
+        "4Y": 4.0,
+        "7Y": 7.0, "10Y": 10.0, "15Y": 15.0,
     }
 
     def calc_R_average_for_each_tenor(self, tenor: str):

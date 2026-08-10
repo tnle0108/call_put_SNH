@@ -45,18 +45,18 @@ def tenor_to_years(tenor: str) -> float:
 
 
 def get_known_rate(
-    ref_curve_name: str,
     ref_tenor: str,
     fixing_date: pd.Timestamp,
     margin: float,
-    curve_folder: str,
+    ref_df: pd.DataFrame,
     convention: str,
 ) -> float:
+    
     hist_curve = MapCurve(
         rpd=fixing_date,
-        curve_folder=curve_folder,
+        df = ref_df,
         convention=convention,
-    ).map_curve(ref_curve_name)
+    ).map_curve()
 
     t = tenor_to_years(ref_tenor)
     ref_rate = hist_curve.zero_rate(t)
@@ -205,6 +205,7 @@ def build(
         ref_convention: str | None = None,
         apply_floor: bool = True,
         apply_cap: bool = True,
+        ref_df: pd.DataFrame|None=None,
 ) -> BondSchedule:
     pays_all = coupon_schedule_df["pay_date"].sort_values().tolist()
     months = round(coupon_accrual * 12)
@@ -265,11 +266,10 @@ def build(
                 )
             margin_known = resolve_margin(margin_dates_map[pay], margin_values_map[pay], fixing)
             known_rate = get_known_rate(
-                ref_curve_name=ref_curve_name,
                 ref_tenor=tenor_map[pay],
                 fixing_date=fixing,
                 margin=margin_known,
-                curve_folder=curve_folder,
+                ref_df=ref_df,
                 convention=ref_convention,
             )
             periods.append(

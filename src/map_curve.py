@@ -16,22 +16,15 @@ from callput import YieldCurve
 class MapCurve:
     # df: pd.DataFrame
     rpd: pd.Timestamp
-    curve_folder: str
+    df: pd.DataFrame
     convention: str
 
     def __post_init__(self):
         self.rpd = pd.Timestamp(self.rpd)
     
-    def map_curve(self, curve_name: str):
-        df = pd.read_csv(
-            os.path.join(self.curve_folder,f'{curve_name}.csv'),
-            index_col=0,
-        )
+    def map_curve(self):
 
-        df.index = pd.to_datetime(df.index)
-        df = df.sort_index()
-
-        tenor_labels = [col.split("_")[-1] for col in df.columns]
+        tenor_labels = [col.split("_")[-1] for col in self.df.columns]
         maturity_dates = []
 
         for tenor in tenor_labels:
@@ -54,14 +47,14 @@ class MapCurve:
         end = np.array(maturity_dates, dtype="datetime64[D]")
         maturities = DayCount.get(self.convention).yearfrac(start, end)
 
-        valid_idx = df.index[df.index <= self.rpd]
+        valid_idx = self.df.index[self.df.index <= self.rpd]
         if len(valid_idx) == 0:
             raise ValueError(
                 f"No curve date <= {self.rpd}"
             )
 
         report_idx = valid_idx.max()
-        zero_rates = df.loc[report_idx].to_numpy(dtype=float)
+        zero_rates = self.df.loc[report_idx].to_numpy(dtype=float)
 
         curve = YieldCurve.from_zero_rates(
             maturities = maturities,
