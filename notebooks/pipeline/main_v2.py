@@ -18,27 +18,23 @@ from src.bond_schedule import CouponSchedule, load_holiday_calendar, build, adju
 #%%
 root = Path.cwd().resolve().parent.parent
 
-BOND_FOLDER_PATH = os.path.join(root, 'datasets', 'raw')
-CURVE_FOLDER_PATH = os.path.join(root, 'datasets', 'curve')
+BOND_FOLDER_PATH    = os.path.join(root, 'datasets', 'raw')
+CURVE_FOLDER_PATH   = os.path.join(root, 'datasets', 'curve')
 HOLIDAY_FOLDER_PATH = Path.cwd().parents[1] / "datasets" / "holidays"
 HULLWHITE_FILE_PATH = os.path.join(root, 'specs', 'hullwhite.json')
 
 VALUE_DATE = pd.to_datetime('2026-03-03')
 
 DISC_CONVENTION = 'ACT/365'
-REF_CONVENTION = 'ACT/365'
-COUP_CONVENTION = 'actactisda'
+REF_CONVENTION  = 'ACT/365'
 
-DISC_NAME = 'vbma_bond_fi'
-REF_NAME = 'SOB4'
+DISC_NAME   = 'vbma_bond_fi'
 
-STEP_DAYS = float(21)
-MIN_STEP_DAYS = float(3)
-RHO = 0.02
+STEP_DAYS       = float(21)
+MIN_STEP_DAYS   = float(3)
+RHO             = 0.02
 #%%
-bond_df = pd.read_csv(os.path.join(BOND_FOLDER_PATH, 'bonds_placeholder - Copy.csv'))
-disc_df = pd.read_csv(os.path.join(CURVE_FOLDER_PATH, f'{DISC_NAME}.csv'))
-ref_df = pd.read_csv(os.path.join(CURVE_FOLDER_PATH, f'{REF_NAME}.csv'))
+bond_df = pd.read_csv(os.path.join(BOND_FOLDER_PATH, 'bond placeholder.csv'))
 
 
 #%%
@@ -81,13 +77,6 @@ with open(HULLWHITE_FILE_PATH, 'r', encoding='utf-8') as f:
 a_r = hw_params[DISC_NAME]['a']
 sigma_r = hw_params[DISC_NAME]['sigma']
 
-disc_leg = CurveLeg(
-    curve = disc_curve,
-    a = a_r,
-    sigma = sigma_r,
-    dcc = DISC_CONVENTION
-)
-
 holiday_calendar = load_holiday_calendar(HOLIDAY_FOLDER_PATH)
 
 coupon_schedule_df = CouponSchedule(
@@ -102,6 +91,7 @@ results = []
 
 for _, row in bond_df.iterrows():
     bond_id = str(row['bond_id'])
+    print("="*80)
     print(bond_id)
     issue_date = pd.to_datetime(row['issue_date'])
     ref_curve_name = (None if pd.isna(row['ref_curve']) else str(row['ref_curve']).strip().lower())
@@ -138,8 +128,8 @@ for _, row in bond_df.iterrows():
             curve_folder=str(CURVE_FOLDER_PATH),
             convention=REF_CONVENTION,
         ).map_curve(ref_curve_name)
-        a_L = hw_params[REF_NAME]['a']
-        sigma_L = hw_params[REF_NAME]['sigma']
+        a_L = hw_params[ref_curve_name]['a']
+        sigma_L = hw_params[ref_curve_name]['sigma']
         reset_dates = CouponSchedule(
             df=bond_df[bond_df['bond_id'] == row['bond_id']],
             holiday_calendar=holiday_calendar,
@@ -202,18 +192,18 @@ for _, row in bond_df.iterrows():
     parts = tree.decompose()
     elapsed = time.perf_counter() - started
 
-    for reading in ('advance', 'arrears'):
-        sched_r = build_sched(reading)
-        sched_r.call = {}
-        _, alt = make_tree_for_bond(sched_r)
-        parts = alt.decompose()
+    # for reading in ('advance', 'arrears'):
+    #     sched_r = build_sched(reading)
+    #     sched_r.call = {}
+    #     _, alt = make_tree_for_bond(sched_r)
+    #     parts = alt.decompose()
 
-    try:
-        sched_arrears = build_sched('arrears')
-        _, alt = make_tree_for_bond(sched_arrears)
-        alt.price()
-    except ValueError as exc:
-        print(f"\nWith the call schedule the arrears reading is refused:\n  {exc}")
+    # try:
+    #     sched_arrears = build_sched('arrears')
+    #     _, alt = make_tree_for_bond(sched_arrears)
+    #     alt.price()
+    # except ValueError as exc:
+    #     print(f"\nWith the call schedule the arrears reading is refused:\n  {exc}")
 
     sched_straight = build_sched('advance', apply_floor=False, apply_cap=False)
     sched_straight.call = {}

@@ -3,12 +3,9 @@ import pandas as pd
 import numpy as np
 import sys 
 from pathlib import Path
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import ClassVar
 sys.path.insert(0, str(Path.cwd().parents[1]))
-
-
-from src.daycount import DayCount
 
 
 @dataclass
@@ -28,26 +25,24 @@ class ShockScenario:
         if tenor not in self.df.columns:
             raise ValueError(f"Tenor '{tenor}' not found in DataFrame.")
         R_avg = float(self.df[tenor].mean())
-        if R_avg < 0.01:
-            R_avg = 0.01
         return R_avg
-        
 
+        
     def calc_delta_R (self, tenor:str):
         tenor_label = tenor.split("_")[-1]
         t_k = self.map_tenor[tenor_label]
         R_avg = self.calc_R_average_for_each_tenor(tenor)
 
-        delta_R_short_horz = 0.85 * min(R_avg,0.05)
+        delta_R_short_horz = max(min(R_avg * 0.85,0.05), 0.01)
         delta_R_short = delta_R_short_horz * np.exp(-t_k/4)
-        delta_R_long_horz = 0.4 * min(R_avg, 0.03)
+        delta_R_long_horz = max(min(R_avg * 0.4, 0.03),0.01)
         delta_R_long = delta_R_long_horz * (1-np.exp(-t_k/4))
 
         if self.shock_type in ["1","2"]: #parallel
             if self.shock_type == "1": #parallel up
-                delta_R = 0.6 * min(R_avg, 0.04)
+                delta_R = max(min(R_avg * 0.6, 0.04), 0.01)
             elif self.shock_type == "2": #parallel down
-                delta_R = -0.6 * min(R_avg, 0.04)
+                delta_R = - max(min(R_avg * 0.6, 0.04), 0.01)
 
         elif self.shock_type in ["3"]: #steepener
             delta_R = -0.65 * abs(delta_R_short) + 0.9 * abs(delta_R_long)
@@ -65,6 +60,7 @@ class ShockScenario:
             raise ValueError(f"Invalid shock_type: {self.shock_type}. Must be one of ['1', '2', '3', '4', '5', '6'].")
 
         return delta_R
+
 
     def create_shock_df(self):
         shock_df = self.df.copy()
