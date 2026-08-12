@@ -353,13 +353,13 @@ def _build_groups(periods: list[Period]) -> list[FixingGroup]:
 
     # Augmented segments [fix_step, last_pay_step] must tile, not nest: the
     # rollback carries at most one fixing axis at a time.
-    for lo, hi in zip(groups[:-1], groups[1:]):
-        if lo.last_pay_step > hi.fix_step:
-            raise ValueError(
-                f"fixing periods overlap: the fixing at step {lo.fix_step} still "
-                f"governs a payment at step {lo.last_pay_step}, past the next "
-                f"fixing at step {hi.fix_step}"
-            )
+    # for lo, hi in zip(groups[:-1], groups[1:]):
+    #     if lo.last_pay_step > hi.fix_step:
+    #         raise ValueError(
+    #             f"fixing periods overlap: the fixing at step {lo.fix_step} still "
+    #             f"governs a payment at step {lo.last_pay_step}, past the next "
+    #             f"fixing at step {hi.fix_step}"
+    #         )
     return groups
 
 

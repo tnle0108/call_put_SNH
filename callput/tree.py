@@ -167,27 +167,37 @@ class CallPutTree:
         n = bond.maturity_step
 
         value = np.full(self.lat.shape(n), bond.face, dtype=float)
-        group: FixingGroup | None = None
-        f_idx = f_vals = None
+        # group: FixingGroup | None = None
+        # f_idx = f_vals = None
+        active: list[tuple[FixingGroup, np.ndarray, np.ndarray]] = []
 
         for i in range(n, -1, -1):
             if i < n:
                 value = self.lat.rollback(value, i, self.step_discount[i])
 
-            if group is not None and i == group.fix_step:
-                value = self._collapse(value, group, f_idx)
-                group = f_idx = f_vals = None
+            for k, (grp, f_idx, f_vals) in enumerate(active):
+                if grp.fix_step == i:
+                    value = self._collapse_at(value, grp, f_idx, k)
+                    del active[k]
+                    break
+
+            # if group is not None and i == group.fix_step:
+            #     value = self._collapse(value, group, f_idx)
+            #     group = f_idx = f_vals = None
 
             opening = bond.expand_at.get(i)
             if opening is not None:
-                if group is not None:  # pragma: no cover - compile_bond forbids it
-                    raise AssertionError("nested fixing groups")
-                group = opening
+                # if group is not None:  # pragma: no cover - compile_bond forbids it
+                #     raise AssertionError("nested fixing groups")
+                # group = opening
                 f_idx, f_vals = self._fixing_grid(opening)
                 value = np.repeat(value[np.newaxis], f_vals.size, axis=0)
+                active.insert(0, (opening, f_idx, f_vals))
 
-            value = self._exercise(value, i, group, f_vals, flags)
-            cash = self._coupons(i, group, f_vals, flags)
+            # value = self._exercise(value, i, group, f_vals, flags)
+            # cash = self._coupons(i, group, f_vals, flags)
+            value = self._exercise(value, i, active, flags)
+            cash = self._coupons(i, active, flags)
             if cash is not None:
                 value = value + cash
 
@@ -271,6 +281,32 @@ class CallPutTree:
         high = np.diagonal(value[hi], axis1=0, axis2=-1)
         return (1.0 - weight) * low + weight * high
 
+    def _collapse_at(self, value:np.ndarray, group: FixingGroup, f_idx:np.ndarray, axis: int) -> np.ndarray:
+        size = int(self.fix_factor.n[group.fix_step])
+        if value.shape[-1] != size:
+            raise AssertionError(
+                f"fixing factor has {size} levels at step {group.fix_step} but the "
+                f"value array's last axis is {value.shape[-1]}; collapse would "
+                f"truncate this silently"
+            )
+
+        if f_idx.size == size:
+            return np.ascontiguousarray(np.diagonal(value, axis1=axis, axis2=-1))
+
+        pos = np.interp(
+            np.arange(size, dtype=float),
+            f_idx.astype(float),
+            np.arange(f_idx.size, dtype=float),
+        )
+
+        lo = np.floor(pos).astype(int)
+        hi = np.minimum(lo + 1, f_idx.size -1)
+        weight = pos - lo
+        v_lo = np.take(value, lo, axis = axis)
+        v_hi = np.take(value, hi, axis = axis)
+        low = np.diagonal(v_lo, axis1=axis, axis2=-1)
+        high = np.diagonal(v_hi, axis1=axis, axis2=-1)
+        return (1 - weight) * low + weight * high
     # -- cash and exercise --------------------------------------------------
     def _index_rate(
         self, fix_step: int, period: Period, z_vals: np.ndarray, flags: PricingFlags
@@ -303,22 +339,32 @@ class CallPutTree:
         self,
         period: Period,
         i: int,
-        group: FixingGroup | None,
-        f_vals: np.ndarray | None,
+        # group: FixingGroup | None,
+        # f_vals: np.ndarray | None,
+        active,
         flags: PricingFlags,
     ):
         """Rate of ``period`` as seen at step ``i``, shaped to broadcast onto V."""
+        found = self._find_active(active, period.fix_step) if period.is_deferred else None
+        if found is not None:
+            k, f_vals = found
+            rate = self._index_rate(period.fix_step, period, f_vals, flags)
+            ndim = len(active) + self.lat.n_factors
+            shape = [1] * ndim
+            shape[k] = f_vals.size
+            return rate.reshape(shape)
+
         if period.fix_step is None:
             return float(period.src.fixed_rate)
 
-        deferred = (
-            group is not None
-            and period.is_deferred
-            and period.fix_step == group.fix_step
-        )
-        if deferred:
-            rate = self._index_rate(period.fix_step, period, f_vals, flags)
-            return rate.reshape((-1,) + (1,) * self.lat.n_factors)
+        # deferred = (
+        #     group is not None
+        #     and period.is_deferred
+        #     and period.fix_step == group.fix_step
+        # )
+        # if deferred:
+        #     rate = self._index_rate(period.fix_step, period, f_vals, flags)
+        #     return rate.reshape((-1,) + (1,) * self.lat.n_factors)
 
         if period.fix_step > i:
             raise ValueError(
@@ -344,8 +390,9 @@ class CallPutTree:
     def _accrued(
         self,
         i: int,
-        group: FixingGroup | None,
-        f_vals: np.ndarray | None,
+        # group: FixingGroup | None,
+        # f_vals: np.ndarray | None,
+        active,
         flags: PricingFlags,
     ):
         """Accrued interest at step ``i``; zero on a payment date.
@@ -360,14 +407,15 @@ class CallPutTree:
         elapsed = int(self.bond.days[i]) - src.accrual_start_day
         span = src.pay_day - src.accrual_start_day
         fraction = src.accrual * elapsed / span
-        return self._rate_of(period, i, group, f_vals, flags) * fraction * self.bond.face
+        return self._rate_of(period, i, active, flags) * fraction * self.bond.face
 
     def _exercise(
         self,
         value: np.ndarray,
         i: int,
-        group: FixingGroup | None,
-        f_vals: np.ndarray | None,
+        # group: FixingGroup | None,
+        # f_vals: np.ndarray | None,
+        active,
         flags: PricingFlags,
     ) -> np.ndarray:
         call = self.bond.call.get(i) if flags.call else None
@@ -375,7 +423,7 @@ class CallPutTree:
         if call is None and put is None:
             return value
         # Strikes are clean, quoted as a fraction of face.
-        accrued = self._accrued(i, group, f_vals, flags)
+        accrued = self._accrued(i, active, flags)
         if call is not None:
             value = np.minimum(call * self.bond.face + accrued, value)
         if put is not None:
@@ -385,8 +433,9 @@ class CallPutTree:
     def _coupons(
         self,
         i: int,
-        group: FixingGroup | None,
-        f_vals: np.ndarray | None,
+        # group: FixingGroup | None,
+        # f_vals: np.ndarray | None,
+        active,
         flags: PricingFlags,
     ):
         """Cash paid at step ``i``, or ``None``.
@@ -401,7 +450,7 @@ class CallPutTree:
             return None
         total = None
         for period in due:
-            rate = self._rate_of(period, i, group, f_vals, flags)
+            rate = self._rate_of(period, i, active, flags)
             cash = rate * period.src.accrual * self.bond.face
             total = cash if total is None else total + cash
         return total
@@ -434,3 +483,9 @@ class CallPutTree:
             out["realized_correlation"] = self.lat.realized_correlation(mid)
             out["target_correlation"] = self.lat.rho
         return out
+
+    def _find_active(self, active, fix_step):
+        for k, (grp, f_idx, f_vals) in enumerate(active):
+            if grp.fix_step == fix_step:
+                return k, f_vals
+        return None

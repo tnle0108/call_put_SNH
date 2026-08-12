@@ -286,7 +286,7 @@ def build(
             )
 
         reset_selected = max(candidates)      # đây là RESET DATE thật, đã chọn đúng
-        fixing = reset_selected - pd.Timedelta(days=fixing_lag_days) if fixing_lag_days else reset_selected
+        fixing = (reset_selected - pd.Timedelta(days=fixing_lag_days) if fixing_lag_days else reset_selected)
 
         if fixing <= rpd:
             if curve_folder is None or ref_curve_name is None or ref_convention is None:
