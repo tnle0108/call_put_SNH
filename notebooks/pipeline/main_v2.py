@@ -29,7 +29,7 @@ CURVE_FOLDER_PATH   = os.path.join(root, 'datasets', 'curve')
 HOLIDAY_FOLDER_PATH = Path.cwd().parents[1] / "datasets" / "holidays"
 HULLWHITE_FILE_PATH = os.path.join(root, 'specs', 'hullwhite.json')
 
-VALUE_DATE = pd.to_datetime('2025-08-18')
+# VALUE_DATE = pd.to_datetime('2024-12-18')
 
 DISC_CONVENTION = 'ACT/365'
 REF_CONVENTION  = 'ACT/365'
@@ -38,6 +38,8 @@ DISC_NAME   = 'vbma_bond_fi'
 
 STEP_DAYS       = float(21)
 MIN_STEP_DAYS   = float(3)
+FIXING_LAG_DAYS = float(7)
+MIN_DATE = pd.to_datetime("2024-06-03")
 # RHO             = 0.02
 #%%
 def legs(
@@ -83,13 +85,7 @@ for shock in shocks_list:
 
     print("*" * 30 + "NEW_SHOCK" + "*"*30)
 
-    # HullWhite.HULLWHITE_CACHE.clear()
-    # CurveNode.CURVENODE_CACHE.clear()
-
-    disc_df_raw = pd.read_csv(
-        os.path.join(CURVE_FOLDER_PATH,f'{DISC_NAME}.csv'),
-        index_col=0,
-    )
+    disc_df_raw = pd.read_csv(os.path.join(CURVE_FOLDER_PATH,f'{DISC_NAME}.csv'), index_col=0)
     disc_df_raw.index = pd.to_datetime(disc_df_raw.index)
     disc_df_raw = disc_df_raw.sort_index()
 
@@ -130,20 +126,17 @@ for shock in shocks_list:
     a_r = shocked_disc_curve_params["a"]
     sigma_r = shocked_disc_curve_params["sigma"]
 
-    disc_curve = MapCurve(
-        rpd = VALUE_DATE,
-        df = disc_df,
-        convention = DISC_CONVENTION
-    ).map_curve()
-
-
-    
-    
     for _, row in bond_df.iterrows():
         bond_id = str(row['bond_id'])
         print("="*80)
         print(bond_id)
         issue_date = pd.to_datetime(row['issue_date'])
+        VALUE_DATE = max(issue_date, MIN_DATE)
+        disc_curve = MapCurve(
+            rpd = VALUE_DATE,
+            df = disc_df,
+            convention = DISC_CONVENTION
+        ).map_curve()
         ref_curve_name = (None if pd.isna(row['ref_curve']) else str(row['ref_curve']).strip().lower())
         maturity_date = adjust_following(pd.to_datetime(row['maturity_date']), holiday_calendar)
         coupon_accrual = float(row['coupon_accrual'])
@@ -178,14 +171,11 @@ for shock in shocks_list:
             ref_df_raw.index = pd.to_datetime(ref_df_raw.index)
             ref_df_raw = ref_df_raw.sort_index()
 
-
             if shock == "0":
                 ref_df = ref_df_raw
             else:
                 ref_df = ShockScenario(shock_type=shock, df = ref_df_raw).create_shock_df()
             ref_df.to_csv(os.path.join(CURVE_FOLDER_PATH, f'{ref_curve_name}_shocked_{shock}.csv'))
-
-
 
             with open(HULLWHITE_FILE_PATH, 'r', encoding='utf-8') as f:
                 hw_params = json.load(f)
@@ -203,8 +193,6 @@ for shock in shocks_list:
                 print(f"Hull-White parameters not found for {shocked_ref_curve_name}.")
                 print("Running Hull-White calibration...")
 
-                # HullWhite.HULLWHITE_CACHE.clear()
-                # CurveNode.CURVENODE_CACHE.clear()
                 hw = HullWhite.get(shocked_ref_curve_name)
 
                 result = hw.calibrate(
@@ -227,26 +215,24 @@ for shock in shocks_list:
                 convention=REF_CONVENTION,
             ).map_curve()
 
-
             reset_dates = CouponSchedule(
                 df=bond_df[bond_df['bond_id'] == row['bond_id']],
                 holiday_calendar=holiday_calendar,
                 country='vnd'
             ).bulid_reset_schedule()
             fixed_rate = None
-            CurveNode.CURVENODE_CACHE.clear()
+            # CurveNode.CURVENODE_CACHE.clear()
             rho_param = float(calc_rho(CURVE_NAMES=[f'{DISC_NAME}_shocked_{shock}', f'{ref_curve_name}_shocked_{shock}']).iloc[1,0])
             print(f'rho = {rho_param:.6f}')
         else:
             ref_curve = None
-            fixed_rate = float(row['annual_coupon_rate'])
+            fixed_rate = [float(x) for x in str(row["annual_coupon_rate"]).split(";")]
             reset_dates = []
             a_L = 0.0
             sigma_L = 0.0
             rho_param = 0.0
-
-        
-
+            ref_df = None
+     
         # -------------------------------------------------------------
         def build_sched(reading, apply_floor=True, apply_cap=True, _row=row, _call_df=call_df, _put_df=put_df):
             return build(
@@ -260,6 +246,7 @@ for shock in shocks_list:
                 call_df=_call_df,
                 put_df=_put_df,
                 fixed_rate=fixed_rate,
+                fixing_lag_days=FIXING_LAG_DAYS,
                 ref_curve_name=ref_curve_name,
                 curve_folder=str(CURVE_FOLDER_PATH),
                 ref_convention=REF_CONVENTION,
@@ -288,34 +275,7 @@ for shock in shocks_list:
         sched = build_sched('advance')
         bond, tree = make_tree_for_bond(sched)
         full_price = tree.price()
-
-
-        step = bond.step_days()
-        for w in bond.warnings:
-            print(f'warning:{w}')
-
-        started = time.perf_counter()
-        parts = tree.decompose()
-        elapsed = time.perf_counter() - started
-
-        # for reading in ('advance', 'arrears'):
-        #     sched_r = build_sched(reading)
-        #     sched_r.call = {}
-        #     _, alt = make_tree_for_bond(sched_r)
-        #     parts = alt.decompose()
-
-        # try:
-        #     sched_arrears = build_sched('arrears')
-        #     _, alt = make_tree_for_bond(sched_arrears)
-        #     alt.price()
-        # except ValueError as exc:
-        #     print(f"\nWith the call schedule the arrears reading is refused:\n  {exc}")
-
-        sched_straight = build_sched('advance', apply_floor=False, apply_cap=False)
-        sched_straight.call = {}
-        sched_straight.put = {}
-        _, tree_straight = make_tree_for_bond(sched_straight)
-        straight_price = tree_straight.price()
+        straight_price = tree.decompose()['straight']
 
         bond_results.append({
             "bond_id": bond_id,
@@ -326,22 +286,6 @@ for shock in shocks_list:
         })
 
         print(f'diff = {full_price - straight_price}')
-
-        
-
-    # pd.DataFrame(bond_results).to_excel(
-    #     os.path.join(root, 'outputs', f'bond_results_{shock}.xlsx'),
-    #     index=False,
-    # )
-
-        # for step_days in (56, 42, 28, 21, 14):
-        #     _, conv = make_tree_for_bond(sched, step_days=step_days)
-        #     d = conv.decompose()
-
-        # base = tree.price()
-        # for bump in (-0.02, -0.01, 0.01, 0.02):
-        #     _, shocked = make_tree_for_bond(sched, disc_bump=bump, ref_bump=bump)
-        #     price = shocked.price()    
 #%%
 
 pd.DataFrame(bond_results).to_excel(
