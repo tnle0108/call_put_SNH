@@ -19,7 +19,6 @@ from src.shock import ShockScenario
 from src.calc_rho import calc_rho
 
 from quantmr.model.shortrate.hullwhite import HullWhite
-from quantmr.curve.curvenode import CurveNode
 
 #%%
 root = Path.cwd().resolve().parent.parent
