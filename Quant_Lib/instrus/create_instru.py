@@ -1,6 +1,6 @@
-from .curr_swap import CurrSwap
+# from .curr_swap import CurrSwap
 from .rate_index import RateIndex
-from .fx_swap_instrument import FXSwapInstrument
+# from .fx_swap_instrument import FXSwapInstrument
 
 
 def create_instru(instru_type: str, instru_name: str, **kwargs):
@@ -35,9 +35,9 @@ def create_instru(instru_type: str, instru_name: str, **kwargs):
             pass
         case "rate_index":
             return RateIndex(rate_index_name=instru_name)
-        case "fx_swap":
-            return FXSwapInstrument(fx_swap_name=instru_name)
-        case "curr_swap":
-            return CurrSwap(curr_swap_name=instru_name)
+        # case "fx_swap":
+        #     return FXSwapInstrument(fx_swap_name=instru_name)
+        # case "curr_swap":
+        #     return CurrSwap(curr_swap_name=instru_name)
         case _:
             raise ValueError(f"Unknown instrument type: {instru_type}")
