@@ -18,7 +18,16 @@ vbma_bond_fi.index = pd.to_datetime(vbma_bond_fi.index)
 vbma_bond_fi = vbma_bond_fi.loc[vbma_bond_fi.index >= START_DATE] if START_DATE is not None else vbma_bond_fi
 vbma_bond_fi = vbma_bond_fi.loc[vbma_bond_fi.index <= END_DATE] if END_DATE is not None else vbma_bond_fi
 
+#%%
+vbma_bond_fi.loc["2026-03-31"]
+#%%
 fi_zyc = BenchmarkCurve(curve_name="FI ZYC VND", benchmark_price=vbma_bond_fi)
 #%%
 fi_zyc_vnd = fi_zyc.print_curve(np.datetime64("2026-03-02"))
 #%%
+rpd = pd.Timestamp("2026-03-02")
+
+obj = fi_zyc._benchmark_objects["30M"]
+
+print(obj._df.loc[rpd])
+# %%

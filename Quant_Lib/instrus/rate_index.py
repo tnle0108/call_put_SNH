@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 from typing import Callable, Union
 from Quant_Lib.instrus.base_instrument import BaseInstrument
-from Quant_Lib.helpers.date_utils.paymentdate import paymentdate
+from Quant_Lib.helpers.date_utils.paymentdate import paymentdate, paymentdate_no_adjustment
 from Quant_Lib.helpers.date_utils.numdays import numdays
 from Quant_Lib.configs import RATE_INDEX
 
@@ -122,13 +122,9 @@ class RateIndex(BaseInstrument):
     def end(self, starts: pd.Series) -> pd.Series:
         """Calculate end dates from start dates (vectorized, works with datetime64)."""
         # Use vectorized paymentdate - returns np.ndarray of datetime64[D]
-        ends = paymentdate(
+        ends = paymentdate_no_adjustment(
             st=starts.values,
             tenor_code=self._end_period.upper(),
-            date_method=self._day_method,
-            curr="VAS Accounting VN",
-            calendar=None,
-            spec_feat=self._roll_conv,
         )
         # Convert from datetime64[D] to datetime64[ns] for consistency
         return pd.Series(ends.astype("datetime64[ns]"), index=starts.index, dtype="datetime64[ns]")
@@ -300,25 +296,6 @@ class RateIndex(BaseInstrument):
                     end_day = pd.Timestamp(end_day)
                     pay_day = pd.Timestamp(pay_day)
 
-                    # ============================================================
-                    # Build coupon dates backwards from maturity
-                    #
-                    # Ví dụ 15M:
-                    #
-                    # start = 4/8/2026
-                    # end   = 7/8/2027
-                    #
-                    # previous coupon = 7/8/2026
-                    #
-                    # => stub = 3M
-                    #
-                    # Ví dụ 27M:
-                    #
-                    # end = 7/8/2028
-                    # previous = 7/8/2027
-                    # previous = 7/8/2026
-                    # ============================================================
-
                     previous_coupon_dates = []
 
                     current_date = end_day
@@ -334,12 +311,6 @@ class RateIndex(BaseInstrument):
 
                     previous_coupon_dates.sort()
 
-                    # ============================================================
-                    # Previous coupons
-                    #
-                    # DF lấy tại END DATE
-                    # ============================================================
-
                     coupon_pv = 0.0
                     previous_date = start_day
 
@@ -351,26 +322,11 @@ class RateIndex(BaseInstrument):
                             conv=self._day_count,
                         )
 
-                        discount_factor = get_discount_factor(
-                            coupon_end
-                        )
+                        discount_factor = get_discount_factor(coupon_end)
 
-                        coupon_pv += (
-                            coupon
-                            * accrual
-                            * discount_factor
-                        )
+                        coupon_pv += (coupon * accrual * discount_factor)
 
                         previous_date = coupon_end
-
-                    # ============================================================
-                    # Final coupon
-                    #
-                    # Accrual: previous coupon date -> END DATE
-                    #
-                    # Nhưng DF:
-                    #       PAY DATE
-                    # ============================================================
 
                     final_accrual = numdays(
                         st=previous_date,
@@ -378,25 +334,11 @@ class RateIndex(BaseInstrument):
                         conv=self._day_count,
                     )
 
-                    final_cashflow = (
-                        1.0
-                        + coupon * final_accrual
-                    )
+                    final_cashflow = (1.0 + coupon * final_accrual)
 
-                    final_discount_factor = get_discount_factor(
-                        pay_day
-                    )
+                    final_discount_factor = get_discount_factor(pay_day)
 
-                    return (
-                        coupon_pv
-                        + final_cashflow * final_discount_factor
-                        - 1.0
-                    )
-
-                # ================================================================
-                # Attach metadata để CurveBootstrapMixin có thể sequential
-                # bootstrap mà không cần inspect source code.
-                # ================================================================
+                    return (coupon_pv + final_cashflow * final_discount_factor - 1.0)
 
                 func._instrument_type = "annual_coupon"
                 func._price = float(price)

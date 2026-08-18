@@ -399,3 +399,91 @@ if __name__ == "__main__":
         )
     )
 
+def paymentdate_no_adjustment(
+    st,
+    tenor_code: str,
+) -> np.datetime64 | np.ndarray:
+    """
+    Calculate raw tenor date without any business-day adjustment.
+
+    Unlike paymentdate(), this function:
+    - does NOT adjust weekends
+    - does NOT adjust holidays
+    - does NOT apply Following / Mod. Following
+    - does NOT apply VN compensatory weekend adjustment
+    - simply adds the tenor to the start date
+
+    Examples
+    --------
+    2026-03-02 + 3M  -> 2026-06-02
+    2026-03-02 + 6M  -> 2026-09-02
+    2026-03-02 + 1Y  -> 2027-03-02
+
+    Returns
+    -------
+    np.datetime64[D] or np.ndarray
+    """
+
+    _ensure_initialized()
+
+    magnitude, delta_type = get_magnitude_delta_type(tenor_code)
+
+    # ============================================================
+    # Single date
+    # ============================================================
+    is_array = isinstance(
+        st,
+        (pd.Series, pd.Index, pd.DatetimeIndex, list, np.ndarray)
+    )
+
+    if not is_array:
+
+        # Convert everything to Timestamp
+        start_ts = pd.Timestamp(st)
+
+        if delta_type == "D":
+            result = start_ts + pd.Timedelta(days=magnitude)
+
+        elif delta_type == "W":
+            result = start_ts + pd.Timedelta(weeks=magnitude)
+
+        elif delta_type == "M":
+            result = start_ts + pd.DateOffset(months=magnitude)
+
+        elif delta_type == "Y":
+            result = start_ts + pd.DateOffset(years=magnitude)
+
+        else:
+            raise ValueError(
+                f"Delta type {delta_type} is not supported."
+            )
+
+        return np.datetime64(result, "D")
+
+    # ============================================================
+    # Array / Series / Index
+    # ============================================================
+
+    start_array = pd.to_datetime(st)
+
+    if delta_type == "D":
+        result = start_array + pd.to_timedelta(magnitude, unit="D")
+
+    elif delta_type == "W":
+        result = start_array + pd.to_timedelta(
+            magnitude * 7,
+            unit="D"
+        )
+
+    elif delta_type == "M":
+        result = start_array + pd.DateOffset(months=magnitude)
+
+    elif delta_type == "Y":
+        result = start_array + pd.DateOffset(years=magnitude)
+
+    else:
+        raise ValueError(
+            f"Delta type {delta_type} is not supported."
+        )
+
+    return result.values.astype("datetime64[D]")
