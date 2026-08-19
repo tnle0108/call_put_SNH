@@ -11,7 +11,6 @@ import quantmr
 from quantmr.schedule import BusCalendar
 from quantmr.model.shortrate.hullwhite import HullWhite
 from quantmr.utils import DayCount
-from quantmr.curve.curvenode import CurveNode
 
 
 

@@ -11,8 +11,6 @@ from dateutil.relativedelta import relativedelta
 
 sys.path.insert(0, str(Path.cwd().parents[0]))
 
-from src.daycount import DayCount
-from src.multi_hw_tree import CouponDef
 from callput import (
     BondSchedule,
     CouponPeriod,

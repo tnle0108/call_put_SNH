@@ -8,7 +8,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT_DIR))
 from Quant_Lib.curves import BenchmarkCurve
 
-SOURCE_PATH = "../datasets/curve/vbmabondfi_raw.csv"
+SOURCE_PATH = "../datasets/curve/vbma_bond_fi.csv"
 # START_DATE = None
 # END_DATE = None
 START_DATE = pd.to_datetime("2026-03-02")
@@ -26,10 +26,19 @@ vbma_bond_fi = vbma_bond_fi.loc[vbma_bond_fi.index <= END_DATE] if END_DATE is n
 fi_zyc = BenchmarkCurve(curve_name="FI ZYC VND", benchmark_price=vbma_bond_fi)
 #%%
 fi_zyc_vnd = fi_zyc.print_curve(np.datetime64("2026-03-02"))
+print(fi_zyc_vnd['value'])
 #%%
-rpd = pd.Timestamp("2026-03-02")
+# fi_zyc_vnd_wide = fi_zyc_vnd["value"].to_frame().T
+# fi_zyc_vnd_wide.index = [fi_zyc_vnd["used_date"].iloc[0]]
+# fi_zyc_vnd_wide.index.name = "Date"
+# tenor_order = list(TENOR_MONTHS.keys())
 
-obj = fi_zyc._benchmark_objects["30M"]
+# fi_zyc_vnd_wide = (
+#     fi_zyc_vnd
+#     .loc[tenor_order, ["used_date", "value"]]
+#     .set_index("used_date")["value"]
+#     .to_frame()
+#     .T
+# )
 
-print(obj._df.loc[rpd])
-# %%
+# fi_zyc_vnd_wide.index.name = "Date"
