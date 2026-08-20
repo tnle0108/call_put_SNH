@@ -47,13 +47,20 @@ class MapCurve:
         end = np.array(maturity_dates, dtype="datetime64[D]")
         maturities = DayCount.get(self.convention).yearfrac(start, end)
 
-        valid_idx = self.df.index[self.df.index <= self.rpd]
-        if len(valid_idx) == 0:
-            raise ValueError(
-                f"No curve date <= {self.rpd}"
-            )
+        # valid_idx = self.df.index[self.df.index <= self.rpd]
+        # if len(valid_idx) == 0:
+        #     raise ValueError(
+        #         f"No curve date <= {self.rpd}"
+        #     )
 
-        report_idx = valid_idx.max()
+        # report_idx = valid_idx.max()
+        valid_idx = self.df.index[self.df.index <= self.rpd]
+
+        report_idx = (
+            valid_idx.max()
+            if len(valid_idx) > 0
+            else self.df.index.min()
+        )
         zero_rates = self.df.loc[report_idx].to_numpy(dtype=float)
 
         curve = YieldCurve.from_zero_rates(

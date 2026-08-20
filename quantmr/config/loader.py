@@ -70,10 +70,11 @@ def _load_holiday_from_csv(file_path: Path) -> ndarray:
         return np.array([], dtype=_dtype)
 
 
-def load_data(data: str) -> dict[str, DataFrame] | dict[str, ndarray]:
+def load_data(data: str, refresh: bool = True) -> dict[str, DataFrame] | dict[str, ndarray]:
     global _DATA_CACHE
     data = data.lower()
-    if data not in _DATA_CACHE:
+
+    if refresh or data not in _DATA_CACHE:
         logger.debug(f"Loading {data} data...")
         loaded_data = {}
         data_dir = _DATASETS_DIR / data

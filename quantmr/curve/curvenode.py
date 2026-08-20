@@ -25,7 +25,9 @@ def find_date_with_lookback(
 CURVE_DATA_CACHE: dict[str, DataFrame] = {}
 
 
-def load_curve_data(curve_name: str) -> DataFrame:
+def load_curve_data(curve_name: str, refresh: bool = True) -> DataFrame:
+    if refresh:
+        CURVE_DATA_CACHE.pop(curve_name, None)
     if curve_name not in CURVE_DATA_CACHE:
         loaded = load_data("curve").get(curve_name)
         CURVE_DATA_CACHE[curve_name] = (
@@ -210,6 +212,7 @@ class CurveNode:
             tuple[str | np.datetime64, str | np.datetime64] | None
         ) = None,
         selected_col: list[str] | slice | None = None,
+        refresh: bool = False,
     ) -> "CurveNode":
         curve_name = curve_name.lower()
 
@@ -233,6 +236,8 @@ class CurveNode:
             norm_col = None
 
         cache_key = (curve_name, norm_range, norm_col)
+        if refresh:
+            cls.CURVENODE_CACHE.pop(cache_key, None)
         if cache_key in cls.CURVENODE_CACHE:
             return cls.CURVENODE_CACHE[cache_key]
 
