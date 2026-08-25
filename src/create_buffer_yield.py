@@ -49,8 +49,8 @@ def get_bond_tenor(
     issue_date: pd.Timestamp,
     maturity_date: pd.Timestamp,
     type: str,
-    min_tolerance: int = 7,
-    direction: str = "lower",
+    min_tolerance: int = 15,
+    direction: str = "upper",
 ):
     if maturity_date <= issue_date:
         raise ValueError(
@@ -119,6 +119,7 @@ class BufferYTM:
     vbma_bond_fi: pd.DataFrame
     vbma: pd.DataFrame
     holiday_calendar: pd.DataFrame
+    margin_type: str
 
     def calc_ytm_df_base_on_vbma_bond_fi(self):
         fixed_rate = [float(x) for x in str(self.bond['annual_coupon_rate']).split(";")]
@@ -162,7 +163,7 @@ class BufferYTM:
                 f"issue_date {issue_date}"
             )
 
-        reset_date = available_dates[-1]
+        reset_date = available_dates.max()
         margins = {}
 
         for tenor, rate in tenor_rate:
@@ -175,6 +176,18 @@ class BufferYTM:
                 value = 0.0
             margins[tenor] = value
         print(f'margin: {margins}')
+
+
+        effective_margins = {}
+        previous_margin = 0.0
+        for tenor, _ in tenor_rate:
+            raw_margin = margins[tenor]
+            effective_margin = max(previous_margin, raw_margin, 0.0)
+            effective_margins[tenor] = effective_margin
+            previous_margin = effective_margin
+
+        print(f'effective_margins: {effective_margins}')
+
 
         for j, (tenor, _) in enumerate(tenor_rate):
             if j + 1 < len(tenor_rate):
@@ -195,11 +208,110 @@ class BufferYTM:
                     if TENOR_MONTHS[col] >= current_month
                     and col in result.columns
                 ]
+            if self.margin_type == "effective":
+                used_margin = effective_margins[tenor]
+            elif self.margin_type == 'normal':
+                used_margin = margins[tenor]
 
-            margin = margins[tenor]
-            result.loc[:, columns] = (result.loc[:, columns] + margin)
+            result.loc[:, columns] = (result.loc[:, columns] + used_margin)
         return result
-        
+
+    def calc_ytm_df_base_only_on_vbma(self):
+        fixed_rate = [float(x) for x in str(self.bond['annual_coupon_rate']).split(";")]
+        coupon_change_date = pd.to_datetime(str(self.bond['coupon_change_date']).split(";"), format='mixed')
+        min_date = pd.to_datetime(self.vbma.index.min())
+        issue_date = max(
+            pd.to_datetime(self.bond["issue_date"]),
+            min_date
+        )
+        maturity_date = adjust_following(pd.to_datetime(self.bond['maturity_date']), holidays=self.holiday_calendar)
+        bond_tenor = get_bond_tenor(issue_date=issue_date, maturity_date=maturity_date, type='vbma')
+        if len(coupon_change_date) > 0 and coupon_change_date.notna().any():
+            change_tenor = [get_bond_tenor(issue_date, d, type='vbma') for d in coupon_change_date if pd.notna(d)]
+        else:
+            change_tenor = []
+
+        buffer_tenor = [bond_tenor] + change_tenor
+        buffer_tenor = sorted(buffer_tenor, key=lambda x: VBMA_TENOR_MONTHS[x])
+    
+        if len(buffer_tenor) != len(fixed_rate):
+            raise ValueError(
+                f"len(buffer_tenor)={len(buffer_tenor)} "
+                f"khác len(fixed_rate)={len(fixed_rate)}"
+            )
+
+        tenor_rate = sorted(zip(buffer_tenor, fixed_rate), key=lambda x: VBMA_TENOR_MONTHS[x[0]])
+        print(tenor_rate)
+        benchmark = self.vbma.copy()
+        result = benchmark.copy()
+
+        benchmark.index = pd.to_datetime(benchmark.index)
+        result.index = benchmark.index
+
+        available_dates = benchmark.index[
+            benchmark.index <= issue_date
+        ]
+
+        if len(available_dates) == 0:
+            raise ValueError(
+                f"No benchmark data available on or before "
+                f"issue_date {issue_date}"
+            )
+
+        reset_date = available_dates.max()
+        margins = {}
+
+        for tenor, rate in tenor_rate:
+
+            if tenor not in benchmark.columns:
+                raise ValueError(f"Benchmark does not contain tenor {tenor}")
+
+            value = (rate - benchmark.loc[reset_date, tenor])
+            if pd.isna(value):
+                value = 0.0
+            margins[tenor] = value
+        print(f'margin: {margins}')
+
+
+        effective_margins = {}
+        previous_margin = 0.0
+        for tenor, _ in tenor_rate:
+            raw_margin = margins[tenor]
+            effective_margin = max(previous_margin, raw_margin, 0.0)
+            effective_margins[tenor] = effective_margin
+            previous_margin = effective_margin
+
+        print(f'effective_margins: {effective_margins}')
+
+
+        for j, (tenor, _) in enumerate(tenor_rate):
+            if j + 1 < len(tenor_rate):
+                next_tenor = tenor_rate[j + 1][0]
+                next_month = TENOR_MONTHS[next_tenor]
+                columns = [
+                    col
+                    for col in TENOR_MONTHS
+                    if TENOR_MONTHS[col] < next_month
+                    and col in result.columns
+                ]
+
+            else:
+                current_month = TENOR_MONTHS[tenor]
+                columns = [
+                    col
+                    for col in TENOR_MONTHS
+                    if TENOR_MONTHS[col] >= current_month
+                    and col in result.columns
+                ]
+            if self.margin_type == "effective":
+                used_margin = effective_margins[tenor]
+            elif self.margin_type == 'normal':
+                used_margin = margins[tenor]
+
+            result.loc[:, columns] = (result.loc[:, columns] + used_margin)
+        return result
+
+
     def calc_ytm_base_on_vbma(self):
         fixed_rate = [float(x) for x in str(self.bond["annual_coupon_rate"]).split(";")]
         coupon_change_date = pd.to_datetime(str(self.bond["coupon_change_date"]).split(";"),format="mixed")
@@ -280,6 +392,17 @@ class BufferYTM:
                 value = 0.0
             margin[tenor] = value
         print(f'margin: {margin}')
+
+        effective_margins = {}
+        previous_margin = 0.0
+        for tenor, _ in tenor_rate:
+            raw_margin = margin[tenor]
+            effective_margin = max(previous_margin, raw_margin, 0.0)
+            effective_margins[tenor] = effective_margin
+            previous_margin = effective_margin
+
+        print(f'effective_margins: {effective_margins}')
+
         result = vbma_fi.copy()
         for j, (tenor, _) in enumerate(tenor_rate):
             if j + 1 < len(tenor_rate):
@@ -301,8 +424,12 @@ class BufferYTM:
                     and col in result.columns
                 ]
 
-            margins = margin[tenor]
-            result.loc[:, columns] = (result.loc[:, columns] + margins)
+            if self.margin_type == "effective":
+                used_margin = effective_margins[tenor]
+            elif self.margin_type == 'normal':
+                used_margin = margin[tenor]
+                
+            result.loc[:, columns] = (result.loc[:, columns] + used_margin)
         return result
     def calc_ytm_df(self):
         min_date = pd.to_datetime(self.vbma_bond_fi.index.min())
@@ -310,7 +437,7 @@ class BufferYTM:
         if min_date <= issue_date:
             ytm_df = self.calc_ytm_df_base_on_vbma_bond_fi()
         elif min_date > issue_date:
-            ytm_df = self.calc_ytm_base_on_vbma()
+            ytm_df = self.calc_ytm_df_base_only_on_vbma()
         return ytm_df
     
     # def calc_zyc_df(
@@ -320,12 +447,22 @@ class BufferYTM:
     
     def calc_zyc_df(self):
         # if type == 'issue_date':
+        #     print('Use issue date buffer type')
         #     ytm_df = self.calc_ytm_df()
         # elif type == 'value_date':
+        #     print('Use value date buffer type')
         #     ytm_df = self.calc_ytm_df_base_on_vbma_bond_fi()
         ytm_df = self.calc_ytm_df()
+        min_date = pd.to_datetime(self.vbma_bond_fi.index.min())
+        issue_date = pd.to_datetime(self.bond["issue_date"])
+        if min_date <= issue_date:
+            curve_name = "FI ZYC VND"
+            order = tenor_order
+        elif min_date > issue_date:
+            curve_name = "FI VBMA"
+            order = vbma_tenor_order
         benchmark_curve = BenchmarkCurve(
-            curve_name="FI ZYC VND",
+            curve_name=curve_name,
             benchmark_price=ytm_df,
         )
         zyc_df_list = []
@@ -333,7 +470,27 @@ class BufferYTM:
             zyc_df_long = benchmark_curve.print_curve(rpd)
             zyc_df_wide = (
                 zyc_df_long
-                .loc[tenor_order, "value"]
+                .loc[order, "value"]
+                .rename(rpd)
+            )
+            zyc_df_list.append(zyc_df_wide)
+        zyc_df = pd.DataFrame(zyc_df_list)
+        zyc_df.index.name = "Date"
+        return zyc_df
+    def calc_zyc_from_vbma_buffer(
+            self,
+            vbma_buffer_df: pd.DataFrame,
+    ):
+        benchmark_curve = BenchmarkCurve(
+            curve_name="FI VBMA",
+            benchmark_price=vbma_buffer_df,
+        )
+        zyc_df_list = []
+        for rpd in vbma_buffer_df.index:
+            zyc_df_long = benchmark_curve.print_curve(rpd)
+            zyc_df_wide = (
+                zyc_df_long
+                .loc[vbma_tenor_order, "value"]
                 .rename(rpd)
             )
             zyc_df_list.append(zyc_df_wide)

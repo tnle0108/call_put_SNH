@@ -20,6 +20,7 @@ from src.create_buffer_yield import BufferYTM
 
 from quantmr.model.shortrate.hullwhite import HullWhite
 from quantmr.curve.curvenode import CurveNode
+from Quant_Lib.curves import BenchmarkCurve
 
 #%%
 root = Path.cwd().resolve().parent.parent
@@ -29,12 +30,14 @@ CURVE_FOLDER_PATH   = os.path.join(root, 'datasets', 'curve')
 HOLIDAY_FOLDER_PATH = Path.cwd().parents[1] / "datasets" / "holidays"
 HULLWHITE_FILE_PATH = os.path.join(root, 'specs', 'hullwhite.json')
 
-# VALUE_DATE = pd.to_datetime('2024-12-18')
+VALUE_DATE = pd.to_datetime('2026-06-15')
 #"act360", "act365", "actactisda"
 DISC_CONVENTION = 'ACT/365'
 REF_CONVENTION  = 'ACT/365'
 
 DISC_NAME   = 'vbma_bond_fi'
+DISC_TYPE = 'both vbma and vbma bond fi'  #value_date, issue_date
+MARGIN_TYPE = 'effective' #effective, normal
 
 STEP_DAYS       = float(21)
 MIN_STEP_DAYS   = float(3)
@@ -79,6 +82,11 @@ vbma = pd.read_csv(
     index_col="Date",
     parse_dates=True,
 )
+vbma_buffer = pd.read_csv(
+    os.path.join(CURVE_FOLDER_PATH, 'vbma_buffer_daily.csv'),
+    index_col="Date",
+    parse_dates=True,
+)
 holiday_calendar = load_holiday_calendar(HOLIDAY_FOLDER_PATH)
 coupon_schedule_df = CouponSchedule(
     df=bond_df,
@@ -86,13 +94,14 @@ coupon_schedule_df = CouponSchedule(
     country = 'vnd'
 ).build_coupon_schedule_df()
 
-print(bond_df.iloc[1])
-test_df = BufferYTM(
-    bond=bond_df.iloc[1],
-    vbma_bond_fi=vbma_bond_fi,
-    vbma=vbma,
-    holiday_calendar=holiday_calendar,
-).calc_ytm_df()
+# print(bond_df.iloc[38])
+# test_df = BufferYTM(
+#     bond=bond_df.iloc[38],
+#     vbma_bond_fi=vbma_bond_fi,
+#     vbma=vbma,
+#     holiday_calendar=holiday_calendar,
+#     margin_type=MARGIN_TYPE,
+# ).calc_ytm_df_base_on_vbma_bond_fi()
 
 #%%
 
@@ -105,6 +114,7 @@ for _, row in bond_df.iterrows():
     print(bond_id)
     issue_date = pd.to_datetime(row["issue_date"])
     VALUE_DATE = max(pd.to_datetime(row["issue_date"]), pd.to_datetime(vbma_bond_fi.index.min()))
+    VALUE_DATE = pd.to_datetime(row["issue_date"])
     ref_curve_name = (None if pd.isna(row['ref_curve']) else str(row['ref_curve']).strip().lower())
     maturity_date = adjust_following(pd.to_datetime(row['maturity_date']), holiday_calendar)
     coupon_accrual = float(row['coupon_accrual'])
@@ -133,25 +143,57 @@ for _, row in bond_df.iterrows():
         "put_strike": pd.Series(put_strikes, dtype="float64"),
     })
 
-    zyc_name = f'bond_{bond_id}'
+    # zyc_name = f'bond_{bond_id}'
+    # zyc_path = Path(CURVE_FOLDER_PATH) / f"{zyc_name}.csv"
+
+    zyc_name = f'zyc_vbma_buffer_daily'
     zyc_path = Path(CURVE_FOLDER_PATH) / f"{zyc_name}.csv"
 
-    globals()[f'ytm_df_{bond_id}'] = BufferYTM(
-        bond=row,
-        vbma_bond_fi=vbma_bond_fi,
-        vbma=vbma,
-        holiday_calendar=holiday_calendar,
-    ).calc_ytm_df()
+    # if DISC_TYPE == 'issue_date':
+    #     globals()[f'ytm_df_{bond_id}'] = BufferYTM(
+    #         bond=row,
+    #         vbma_bond_fi=vbma_bond_fi,
+    #         vbma=vbma,
+    #         holiday_calendar=holiday_calendar,
+    #         margin_type=MARGIN_TYPE,
+    #     ).calc_ytm_df()
+
+    # elif DISC_TYPE == 'value_date':
+    #     globals()[f'ytm_df_{bond_id}'] = BufferYTM(
+    #         bond=row,
+    #         vbma_bond_fi=vbma_bond_fi,
+    #         vbma=vbma,
+    #         holiday_calendar=holiday_calendar,
+    #         margin_type=MARGIN_TYPE,
+    #     ).calc_ytm_df_base_on_vbma_bond_fi()
+
+    # globals()[f'ytm_df_{bond_id}'] = BufferYTM(
+    #     bond=row,
+    #     vbma_bond_fi=vbma_bond_fi,
+    #     vbma=vbma,
+    #     holiday_calendar=holiday_calendar,
+    #     margin_type=MARGIN_TYPE,
+    # ).calc_ytm_df()
 
     if zyc_path.exists():
         zyc_df = pd.read_csv(zyc_path, index_col=0, parse_dates=True)
     else:          
+        # zyc_df = BufferYTM(
+        #     bond=row,
+        #     vbma_bond_fi=vbma_bond_fi,
+        #     vbma=vbma,
+        #     holiday_calendar=holiday_calendar,
+        #     margin_type=MARGIN_TYPE,
+        # ).calc_zyc_df()
+
         zyc_df = BufferYTM(
             bond=row,
             vbma_bond_fi=vbma_bond_fi,
             vbma=vbma,
             holiday_calendar=holiday_calendar,
-        ).calc_zyc_df()
+            margin_type=MARGIN_TYPE,
+        ).calc_zyc_from_vbma_buffer(vbma_buffer_df=vbma_buffer)
+
 
     zyc_df.to_csv(zyc_path)
     CurveNode.get(
@@ -213,7 +255,7 @@ for _, row in bond_df.iterrows():
             country='vnd'
         ).bulid_reset_schedule()
         fixed_rate = None
-        rho_param = float(calc_rho(CURVE_NAMES=[f'bond_{bond_id}', f'{ref_curve_name}']).iloc[1,0])
+        rho_param = float(calc_rho(CURVE_NAMES=[f'{zyc_name}', f'{ref_curve_name}']).iloc[1,0])
         print(f'rho = {rho_param:.6f}')
     else:
         fixed_rate = [float(x) for x in str(row["annual_coupon_rate"]).split(";")]
@@ -295,7 +337,7 @@ for _, row in bond_df.iterrows():
 #%%
 
 pd.DataFrame(bond_results).to_excel(
-    os.path.join(root, 'outputs', 'bond_results.xlsx'),
+    os.path.join(root, 'outputs', f'bond_results_{DISC_TYPE}_type.xlsx'),
     index=False,
 )
         
