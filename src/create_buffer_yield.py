@@ -111,7 +111,38 @@ def get_bond_tenor(
 
         return min(candidates, key=lambda x: x[1])[0]
 
+def calc_zyc_df(
+        bond:pd.Series,
+        ytm_df: pd.DataFrame,
+        tier_2_type: str,
+):
+    bond_group = str(bond['group'])
+    if bond_group == "Tier2":
+        if tier_2_type == "VBMA":
+            curve_name = "FI VBMA"
+        elif tier_2_type == "VBMA_Bond_FI":
+            curve_name = "FI ZYC VND"
+        order = vbma_tenor_order
+    else:
+        curve_name = "FI ZYC VND"
+        order = tenor_order
 
+    benchmark_curve = BenchmarkCurve(
+        curve_name=curve_name,
+        benchmark_price=ytm_df,
+    )
+    zyc_df_list = []
+    for rpd in ytm_df.index:
+        zyc_df_long = benchmark_curve.print_curve(rpd)
+        zyc_df_wide = (
+            zyc_df_long
+            .loc[order, "value"]
+            .rename(rpd)
+        )
+        zyc_df_list.append(zyc_df_wide)
+    zyc_df = pd.DataFrame(zyc_df_list)
+    zyc_df.index.name = "Date"
+    return zyc_df
 
 @dataclass
 class BufferYTM:
@@ -445,7 +476,7 @@ class BufferYTM:
     #         type: str,
     # ):
     
-    def calc_zyc_df(self):
+    def calc_zyc_df_buffer(self):
         # if type == 'issue_date':
         #     print('Use issue date buffer type')
         #     ytm_df = self.calc_ytm_df()

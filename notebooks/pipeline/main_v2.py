@@ -16,7 +16,7 @@ from src.map_curve import MapCurve
 from src.bond_schedule import CouponSchedule, load_holiday_calendar, build, adjust_following
 from src.shock import ShockScenario
 from src.calc_rho import calc_rho
-from src.create_buffer_yield import BufferYTM
+from src.create_buffer_yield import BufferYTM, calc_zyc_df
 
 from quantmr.model.shortrate.hullwhite import HullWhite
 from quantmr.curve.curvenode import CurveNode
@@ -30,7 +30,8 @@ CURVE_FOLDER_PATH   = os.path.join(root, 'datasets', 'curve')
 HOLIDAY_FOLDER_PATH = Path.cwd().parents[1] / "datasets" / "holidays"
 HULLWHITE_FILE_PATH = os.path.join(root, 'specs', 'hullwhite.json')
 
-VALUE_DATE = pd.to_datetime('2026-06-15')
+VALUE_DATE = pd.to_datetime('2026-03-31')
+TIER_2_TYPE = "VBMA_Bond_FI" #VBMA, VBMA_Bond _Fi
 #"act360", "act365", "actactisda"
 DISC_CONVENTION = 'ACT/365'
 REF_CONVENTION  = 'ACT/365'
@@ -77,31 +78,22 @@ vbma_bond_fi = pd.read_csv(
     index_col="Date",
     parse_dates=True,
 )
-vbma = pd.read_csv(
-    os.path.join(CURVE_FOLDER_PATH, 'vbma.csv'),
-    index_col="Date",
-    parse_dates=True,
-)
-vbma_buffer = pd.read_csv(
-    os.path.join(CURVE_FOLDER_PATH, 'vbma_buffer_daily.csv'),
-    index_col="Date",
-    parse_dates=True,
-)
+# vbma = pd.read_csv(
+#     os.path.join(CURVE_FOLDER_PATH, 'vbma.csv'),
+#     index_col="Date",
+#     parse_dates=True,
+# )
+# vbma_buffer = pd.read_csv(
+#     os.path.join(CURVE_FOLDER_PATH, 'Tier2.csv'),
+#     index_col="Date",
+#     parse_dates=True,
+# )
 holiday_calendar = load_holiday_calendar(HOLIDAY_FOLDER_PATH)
 coupon_schedule_df = CouponSchedule(
     df=bond_df,
     holiday_calendar=holiday_calendar,
     country = 'vnd'
 ).build_coupon_schedule_df()
-
-# print(bond_df.iloc[38])
-# test_df = BufferYTM(
-#     bond=bond_df.iloc[38],
-#     vbma_bond_fi=vbma_bond_fi,
-#     vbma=vbma,
-#     holiday_calendar=holiday_calendar,
-#     margin_type=MARGIN_TYPE,
-# ).calc_ytm_df_base_on_vbma_bond_fi()
 
 #%%
 
@@ -113,8 +105,8 @@ for _, row in bond_df.iterrows():
     print("\n" + "=" * 80)
     print(bond_id)
     issue_date = pd.to_datetime(row["issue_date"])
-    VALUE_DATE = max(pd.to_datetime(row["issue_date"]), pd.to_datetime(vbma_bond_fi.index.min()))
-    VALUE_DATE = pd.to_datetime(row["issue_date"])
+    # VALUE_DATE = max(pd.to_datetime(row["issue_date"]), pd.to_datetime(vbma_bond_fi.index.min()))
+    # VALUE_DATE = pd.to_datetime(row["issue_date"])
     ref_curve_name = (None if pd.isna(row['ref_curve']) else str(row['ref_curve']).strip().lower())
     maturity_date = adjust_following(pd.to_datetime(row['maturity_date']), holiday_calendar)
     coupon_accrual = float(row['coupon_accrual'])
@@ -143,57 +135,19 @@ for _, row in bond_df.iterrows():
         "put_strike": pd.Series(put_strikes, dtype="float64"),
     })
 
-    # zyc_name = f'bond_{bond_id}'
-    # zyc_path = Path(CURVE_FOLDER_PATH) / f"{zyc_name}.csv"
-
-    zyc_name = f'zyc_vbma_buffer_daily'
+    bond_group = str(row['group'])
+    if bond_group == "Tier2":
+        ytm_df = pd.read_csv(os.path.join(CURVE_FOLDER_PATH, f'Tier2_{TIER_2_TYPE}.csv'), index_col=0, parse_dates=True)
+        zyc_name = f'FI_ZYC_VND_{bond_group}_{TIER_2_TYPE}'
+    else:
+        ytm_df = pd.read_csv(os.path.join(CURVE_FOLDER_PATH, f'{bond_group}.csv'), index_col=0, parse_dates=True)
+        zyc_name = f'FI_ZYC_VND_{bond_group}'
     zyc_path = Path(CURVE_FOLDER_PATH) / f"{zyc_name}.csv"
-
-    # if DISC_TYPE == 'issue_date':
-    #     globals()[f'ytm_df_{bond_id}'] = BufferYTM(
-    #         bond=row,
-    #         vbma_bond_fi=vbma_bond_fi,
-    #         vbma=vbma,
-    #         holiday_calendar=holiday_calendar,
-    #         margin_type=MARGIN_TYPE,
-    #     ).calc_ytm_df()
-
-    # elif DISC_TYPE == 'value_date':
-    #     globals()[f'ytm_df_{bond_id}'] = BufferYTM(
-    #         bond=row,
-    #         vbma_bond_fi=vbma_bond_fi,
-    #         vbma=vbma,
-    #         holiday_calendar=holiday_calendar,
-    #         margin_type=MARGIN_TYPE,
-    #     ).calc_ytm_df_base_on_vbma_bond_fi()
-
-    # globals()[f'ytm_df_{bond_id}'] = BufferYTM(
-    #     bond=row,
-    #     vbma_bond_fi=vbma_bond_fi,
-    #     vbma=vbma,
-    #     holiday_calendar=holiday_calendar,
-    #     margin_type=MARGIN_TYPE,
-    # ).calc_ytm_df()
 
     if zyc_path.exists():
         zyc_df = pd.read_csv(zyc_path, index_col=0, parse_dates=True)
     else:          
-        # zyc_df = BufferYTM(
-        #     bond=row,
-        #     vbma_bond_fi=vbma_bond_fi,
-        #     vbma=vbma,
-        #     holiday_calendar=holiday_calendar,
-        #     margin_type=MARGIN_TYPE,
-        # ).calc_zyc_df()
-
-        zyc_df = BufferYTM(
-            bond=row,
-            vbma_bond_fi=vbma_bond_fi,
-            vbma=vbma,
-            holiday_calendar=holiday_calendar,
-            margin_type=MARGIN_TYPE,
-        ).calc_zyc_from_vbma_buffer(vbma_buffer_df=vbma_buffer)
-
+        zyc_df = calc_zyc_df(bond=row, ytm_df=ytm_df, tier_2_type=TIER_2_TYPE)
 
     zyc_df.to_csv(zyc_path)
     CurveNode.get(
@@ -222,6 +176,22 @@ for _, row in bond_df.iterrows():
 
 
     if ref_curve_name is not None:
+        
+        # ref_ytm_df = pd.read_csv(os.path.join(CURVE_FOLDER_PATH, f'{ref_curve_name}.csv'), index_col=0, parse_dates=True)
+        # ref_zyc_name = f'FI_{ref_curve_name}'
+        # ref_zyc_path = Path(CURVE_FOLDER_PATH) / f"{ref_zyc_name}.csv"
+
+        # if ref_zyc_path.exists():
+        #     ref_df_raw = pd.read_csv(ref_zyc_path, index_col=0, parse_dates=True)
+        # else:          
+        #     ref_df_raw = calc_zyc_df(bond=row, ytm_df=ytm_df)
+
+        # zyc_df.to_csv(zyc_path)
+        # CurveNode.get(
+        #     zyc_name,
+        #     refresh=True,
+        # )
+
         ref_df_raw = pd.read_csv(os.path.join(CURVE_FOLDER_PATH, f'{ref_curve_name}.csv'), index_col = 0)
 
         ref_df_raw.index = pd.to_datetime(ref_df_raw.index)
@@ -337,7 +307,7 @@ for _, row in bond_df.iterrows():
 #%%
 
 pd.DataFrame(bond_results).to_excel(
-    os.path.join(root, 'outputs', f'bond_results_{DISC_TYPE}_type.xlsx'),
+    os.path.join(root, 'outputs', f'bond_results_with_Tier_2_type_{TIER_2_TYPE}.xlsx'),
     index=False,
 )
         
