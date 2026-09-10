@@ -120,9 +120,10 @@ def calc_zyc_df(
     if bond_group == "Tier2":
         if tier_2_type == "VBMA":
             curve_name = "FI VBMA"
+            order = vbma_tenor_order
         elif tier_2_type == "VBMA_Bond_FI":
             curve_name = "FI ZYC VND"
-        order = vbma_tenor_order
+            order = tenor_order
     else:
         curve_name = "FI ZYC VND"
         order = tenor_order
