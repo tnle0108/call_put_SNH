@@ -97,6 +97,7 @@ for _, row in bond_df.iloc[[41]].iterrows():
     print("\n" + "=" * 80)
     print(bond_id)
     issue_date = pd.to_datetime(row["issue_date"])
+    tier2 = str(row["Tier2"]).strip().lower()
     style = str(row["style"]).strip().lower()
     # VALUE_DATE = max(pd.to_datetime(row["issue_date"]), pd.to_datetime(vbma_bond_fi.index.min()))
     # VALUE_DATE = pd.to_datetime(row["issue_date"])
@@ -141,7 +142,7 @@ for _, row in bond_df.iloc[[41]].iterrows():
         step_days = NORM_STEP_DAYS
     
     bond_group = str(row['group'])
-    if bond_group == "Tier2":
+    if tier2 == "Yes":
         ytm_df = pd.read_csv(os.path.join(CURVE_FOLDER_PATH, f'Tier2_{TIER_2_TYPE}.csv'), index_col=0, parse_dates=True)
         zyc_name = f'FI_ZYC_VND_{bond_group}_{TIER_2_TYPE}'
     else:
