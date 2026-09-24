@@ -164,7 +164,7 @@ python src\tier2_spread_selftest.py
 
 | Tệp | Nội dung |
 |---|---|
-| `datasets/raw/bond placeholder.csv` | Term sheet 88 mã: ngày, giá thực hiện, biên độ, sàn/trần, kiểu quyền chọn, `group`, `is_tier2` |
+| `datasets/raw/bond placeholder.xlsx` | Term sheet 88 mã: ngày, giá thực hiện, biên độ, sàn/trần, kiểu quyền chọn, `group`, `is_tier2` |
 | `datasets/raw/tier2_price_obs.csv` | **Quan sát giá dirty dạng dài** cho trái phiếu **tăng vốn** — `bond_id, obs_date, dirty_amount, par_value, coupon_rate` |
 | `datasets/raw/nontier2_price_obs.csv` | Cùng lược đồ, cho trái phiếu **không tăng vốn có quyền chọn**. Sinh ra tầng `OAS`. Hai pool tách bạch: nạp nhầm mã sang pool kia thì mô hình dừng và báo lỗi |
 | `datasets/curve/LB_G{1,2,3}.csv` | Báo giá YTM theo phân nhóm tổ chức phát hành |

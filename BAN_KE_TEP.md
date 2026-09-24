@@ -96,7 +96,7 @@ SHA-256 để đối chiếu sau khi giải nén.
 | `datasets/holiday/usd.csv` | 4,326 | `f491f447e6da` |
 | `datasets/holiday/vnd.csv` | 43,458 | `9cd2221f86ed` |
 | `datasets/raw/Histocopy_FI_ZYC_VND_GD2_family.xlsx` | 263,638 | `ef6e2fe3c37b` |
-| `datasets/raw/bond placeholder.csv` | 13,432 | `a4674029023d` |
+| `datasets/raw/bond placeholder.xlsx` | 13,432 | `a4674029023d` |
 | `datasets/raw/nontier2_price_obs.csv` | 52 | `f4186b0851ec` |
 | `datasets/raw/tier2_price_obs.csv` | 4,690 | `48ac6735c7d3` |
 | `datasets/spread/tier2_spread_calibrated.csv` | 3,426 | `f52dd00abccf` |
