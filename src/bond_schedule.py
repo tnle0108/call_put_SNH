@@ -296,30 +296,10 @@ def build(
             known_rate = get_known_rate(
                 ref_tenor=tenor_map[pay],
                 fixing_date=fixing,
-                margin=0.0,  # chưa cộng margin
+                margin=margin_known,
                 ref_df=ref_df,
                 convention=ref_convention,
             )
-
-            ref_delta = tenor_to_years(tenor_map[pay])
-
-            # Continuous reference rate -> simple reference rate
-            known_rate = (
-                np.exp(known_rate * ref_delta) - 1.0
-            ) / ref_delta
-
-            # Add margin after conversion
-            known_rate += margin_known
-            # Sàn/trần phải áp CẢ cho kỳ đã cố định: về hợp đồng, lãi đã chốt là
-            # min(max(L + margin, floor), cap). Trước đây nhánh này emit
-            # floor=None, cap=None nên sàn bị bỏ — định giá thấp đi khi lãi tham
-            # chiếu xuống dưới sàn, mà không có cảnh báo nào.
-            known_floor = nan_to_none(floor_map[pay]) if apply_floor else None
-            known_cap = nan_to_none(cap_map[pay]) if apply_cap else None
-            if known_floor is not None:
-                known_rate = max(known_rate, known_floor)
-            if known_cap is not None:
-                known_rate = min(known_rate, known_cap)
             periods.append(
                 CouponPeriod(
                     pay_day=days(pay, rpd),

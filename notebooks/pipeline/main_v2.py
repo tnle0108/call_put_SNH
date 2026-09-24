@@ -15,15 +15,9 @@ from callput import (
 )
 from src.map_curve import MapCurve
 from src.bond_schedule import CouponSchedule, load_holiday_calendar, build, adjust_following
-from src.bond_pricer import (
-    BondTermSheet, ModelParams, PricingConfig, price_bond_layered,
-)
-from src.tier2_spread import (
-    delta_for_bond, load_spread_table, parse_tier2_flag, validate_term_sheet,
-)
 from src.shock import ShockScenario
 from src.calc_rho import calc_rho
-from src.create_buffer_yield import calc_zyc_df
+from src.create_buffer_yield import BufferYTM, calc_zyc_df
 
 from quantmr.model.shortrate.hullwhite import HullWhite
 from quantmr.curve.curvenode import CurveNode
@@ -38,51 +32,48 @@ HOLIDAY_FOLDER_PATH = Path.cwd().parents[1] / "datasets" / "holidays"
 HULLWHITE_FILE_PATH = os.path.join(root, 'specs', 'hullwhite.json')
 
 VALUE_DATE = pd.to_datetime('2026-03-31')
-
-# Nguồn DUY NHẤT của (a, sigma) cho mọi phân nhóm tổ chức phát hành.
-#
-# Đường ZYC của từng nhóm được dựng bằng "đường cơ bản + margin", mà margin thì
-# cập nhật không đều. Hiệu chỉnh Hull-White trực tiếp trên đường nhóm vì vậy cho
-# (a, sigma) không tin cậy — nó bắt cả nhiễu của margin. Mô hình lấy (a, sigma)
-# hiệu chỉnh trên đường cơ bản, còn phần MỨC lãi suất vẫn khớp vào đúng đường
-# nhóm qua bước quy nạp tiến Arrow-Debreu.
-#
-# Nói cách khác: động học vay của đường cơ bản, mức lấy của đường nhóm.
-#
-# Hằng số này phải là chỗ duy nhất quyết định điều đó. Trước đây hành vi này chỉ
-# đúng nhờ specs/hullwhite.json tình cờ bị ghi đè cùng một bộ số cho mọi khoá —
-# không có dòng code nào giữ, và một lần hiệu chỉnh lại theo tên nhóm là mất.
-BASE_CURVE = 'FI_ZYC_VND_VBMA_Bond_FI'
+TIER_2_TYPE = "VBMA_Bond_FI" #VBMA, VBMA_Bond _Fi
 #"act360", "act365", "actactisda"
 DISC_CONVENTION = 'ACT/365'
 REF_CONVENTION  = 'ACT/365'
 
+DISC_NAME   = 'vbma_bond_fi'
+DISC_TYPE = 'both vbma and vbma bond fi'  #value_date, issue_date
+MARGIN_TYPE = 'effective' #effective, normal
+
 NORM_STEP_DAYS  = float(21)
 AME_STEP_DAYS   = float(5)
 MIN_STEP_DAYS   = float(3)
-# Giả định: ngày fixing = ngày đặt lại lãi suất (không có độ trễ).
-# Ngày reset vốn đã trùng ngày trả lãi nên fixing không còn sinh mốc neo riêng
-# trên lưới ngày: bỏ được 4 mốc và toàn bộ khoảng vụn 7 ngày cạnh mốc coupon.
-FIXING_LAG_DAYS = float(0)
+FIXING_LAG_DAYS = float(7)
 
 #%%
-# Việc dựng lịch dòng tiền và dựng cây đã chuyển sang src/bond_pricer.py, nơi nó
-# là hàm thuần theo ngày định giá. Nhờ vậy module hiệu chỉnh spread Tier 2 định
-# giá được tại ngày quan sát giá thay vì chỉ tại VALUE_DATE.
-PRICING_CFG = PricingConfig(
-    curve_folder=str(CURVE_FOLDER_PATH),
-    disc_convention=DISC_CONVENTION,
-    ref_convention=REF_CONVENTION,
-    norm_step_days=NORM_STEP_DAYS,
-    ame_step_days=AME_STEP_DAYS,
-    min_step_days=MIN_STEP_DAYS,
-    fixing_lag_days=FIXING_LAG_DAYS,
-    calendar_country='vnd',
-)
+def legs(
+        disc_curve,
+        ref_curve,
+        a_r, sigma_r,
+        a_L, sigma_L,
+        disc_conv, ref_conv,
+        disc_bump=0.0,
+        ref_bump=0.0,
+):
+    disc = disc_curve.shifted(disc_bump)
+    if ref_curve is None:
+        return CurveLeg(disc, a_r, sigma_r, disc_conv), None
+    ref = ref_curve.shifted(ref_bump)
+    return (
+        CurveLeg(disc, a_r, sigma_r, disc_conv),
+        CurveLeg(ref, a_L, sigma_L, ref_conv),
+    )
+
+def make_tree(sched, rho_param, step_days=NORM_STEP_DAYS, min_step=MIN_STEP_DAYS, **kw):
+    bond = compile_bond(sched, step_days=step_days, min_step=min_step)
+    disc, ref = legs(**kw)
+    if ref is None:
+        return bond, CallPutTree.single_curve(bond, disc)
+    return bond, CallPutTree.multi_curve(bond, disc, ref, rho=rho_param)
 
 #%%
 bond_df = pd.read_csv(os.path.join(BOND_FOLDER_PATH, 'bond placeholder.csv'))
-validate_term_sheet(bond_df)
 vbma_bond_fi = pd.read_csv(
     os.path.join(CURVE_FOLDER_PATH, "vbma_bond_fi.csv"),
     index_col="Date",
@@ -95,122 +86,113 @@ coupon_schedule_df = CouponSchedule(
     holiday_calendar=holiday_calendar,
     country = 'vnd'
 ).build_coupon_schedule_df()
-# Đường cơ bản: bootstrap nếu chưa có, hiệu chỉnh Hull-White nếu chưa có tham số.
-# Cả hai đều CÓ ĐIỀU KIỆN. Trước đây `hw.calibrate(..., save=True)` chạy vô điều
-# kiện mỗi lần, tức ghi lại specs/hullwhite.json mỗi lần chạy — nên một bảng
-# spread dựng trước đó lặng lẽ lệch pha với bộ tham số đang có trên đĩa.
-_base_csv = os.path.join(CURVE_FOLDER_PATH, f"{BASE_CURVE}.csv")
-if not os.path.exists(_base_csv):
-    calc_zyc_df(ytm_df=vbma_bond_fi).to_csv(_base_csv)
 
-with open(HULLWHITE_FILE_PATH, 'r', encoding='utf-8') as f:
-    _hw_all = json.load(f)
-if not {"a", "sigma"} <= set(_hw_all.get(BASE_CURVE.lower(), {})):
-    print(f"Chưa có (a, sigma) cho {BASE_CURVE} — đang hiệu chỉnh Hull-White...")
-    HullWhite.get(BASE_CURVE).calibrate(BASE_CURVE, method="kfmh", save=True)
-    with open(HULLWHITE_FILE_PATH, 'r', encoding='utf-8') as f:
-        _hw_all = json.load(f)
-
-A_R = _hw_all[BASE_CURVE.lower()]["a"]
-SIGMA_R = _hw_all[BASE_CURVE.lower()]["sigma"]
-print(f"(a, sigma) dùng cho MỌI phân nhóm, lấy từ {BASE_CURVE}: "
-      f"a = {A_R:.6f}, sigma = {SIGMA_R:.6f}")
 #%%
 
 shocks_list = ["0","1", "2", "3", "4", "5", "6"]
 bond_results = []
 
-# Hai bảng phần bù, đọc một lần ngoài vòng lặp. Cả hai do build_spreads.py dựng.
-# Thiếu bảng nào thì tầng đó coi như 0 — nói to chứ không im lặng.
-SPREAD_FOLDER_PATH = os.path.join(root, 'datasets', 'spread')
-
-
-def _doc_bang(ten, nhan):
-    p = os.path.join(SPREAD_FOLDER_PATH, ten)
-    if os.path.exists(p):
-        return load_spread_table(p)
-    print(f"[!] chưa có {p} — {nhan}")
-    return None
-
-
-oas_df = _doc_bang('nontier2_oas_monthly.csv',
-                   'MỌI trái phiếu sẽ định giá với OAS = 0')
-spread_df = _doc_bang('tier2_spread_monthly.csv',
-                      'trái phiếu tăng vốn sẽ dùng delta = 0')
-
-# Mặc định chạy cả sổ. Thu hẹp khi cần gỡ lỗi — mã American dùng step 5 ngày
-# nên một mình nó chiếm phần lớn thời gian của cả lần chạy:
-#   CP_ROWS=0,5,41       chạy vài dòng
-#   CP_DUMP=<đường dẫn>  ghi kết quả dạng hex float để so từng bit
-_rows_env = os.environ.get("CP_ROWS", "all")
-ROW_SELECTION = (list(range(len(bond_df))) if _rows_env == "all"
-                 else [int(x) for x in _rows_env.split(",")])
-
-#chỉ lấy những bond có ngày phát hành < value date< ngày đáo hạn
-# chuyển issue_date và maturity_date sang datetime để so sánh
-bond_df["issue_date"] = pd.to_datetime(bond_df["issue_date"])
-bond_df["maturity_date"] = pd.to_datetime(bond_df["maturity_date"])
-ROW_SELECTION = [i for i in ROW_SELECTION if bond_df.iloc[i]["issue_date"] <= VALUE_DATE < bond_df.iloc[i]["maturity_date"]]
-
-for i in ROW_SELECTION:
-    row = bond_df.iloc[i]
-    spec = BondTermSheet.from_bond_df(
-        bond_df, coupon_schedule_df, holiday_calendar, PRICING_CFG, iloc=i)
-    bond_id = spec.bond_id
+for _, row in bond_df.iloc[[41]].iterrows():
+    bond_id = str(row['bond_id'])
     print("\n" + "=" * 80)
     print(bond_id)
-    ref_curve_name = spec.ref_curve_name
-    maturity_date = spec.maturity_date
+    issue_date = pd.to_datetime(row["issue_date"])
+    tier2 = str(row["Tier2"]).strip().lower()
+    style = str(row["style"]).strip().lower()
+    # VALUE_DATE = max(pd.to_datetime(row["issue_date"]), pd.to_datetime(vbma_bond_fi.index.min()))
+    # VALUE_DATE = pd.to_datetime(row["issue_date"])
+    ref_curve_name = (None if pd.isna(row['ref_curve']) else str(row['ref_curve']).strip().lower())
+    maturity_date = adjust_following(pd.to_datetime(row['maturity_date']), holiday_calendar)
+    coupon_accrual = float(row['coupon_accrual'])
+    face_value = float(row['face'])
+
+    if style == "american" and pd.notna(row["call_strike"]) and float(row["call_strike"]) > 0:
+        call_dates = pd.date_range( start=max(issue_date,VALUE_DATE), end=maturity_date, freq=f"{str(AME_STEP_DAYS)}D" ).tolist()
+        call_strikes = [ float(row["call_strike"]) / face_value ] * len(call_dates)
+
+    elif pd.notna(row["call_exercise_dates"]) and str(row["call_exercise_dates"]).strip():
+        call_dates = [pd.to_datetime(x.strip(), format='mixed') for x in str(row["call_exercise_dates"]).split(";")]
+        call_strikes = [float(x)/face_value for x in str(row["call_strike"]).split(";")]
+    else:
+        call_dates = []
+        call_strikes = []
+
+    if style == "american" and pd.notna(row["put_strike"]) and float(row["put_strike"]) > 0:
+        put_dates = pd.date_range( start=max(issue_date,VALUE_DATE), end=maturity_date, freq=f"{str(AME_STEP_DAYS)}D" ).tolist()
+        put_strikes = [ float(row["put_strike"]) / face_value ] * len(put_dates)
+    elif pd.notna(row["put_exercise_dates"]) and str(row["put_exercise_dates"]).strip():
+        put_dates = [pd.to_datetime(x.strip(), format='mixed') for x in str(row["put_exercise_dates"]).split(";")]
+        put_strikes = [float(x)/face_value for x in str(row["put_strike"]).split(";")]
+    else:
+        put_dates = []
+        put_strikes = []
+
+    call_df = pd.DataFrame({
+        "call_date": pd.Series(call_dates, dtype="datetime64[ns]"),
+        "call_strike": pd.Series(call_strikes, dtype="float64"),
+    })
+    put_df = pd.DataFrame({
+        "put_date": pd.Series(put_dates, dtype="datetime64[ns]"),
+        "put_strike": pd.Series(put_strikes, dtype="float64"),
+    })
+
+    if style == 'american':
+        step_days = AME_STEP_DAYS
+    else:
+        step_days = NORM_STEP_DAYS
     
-    # Đường chiết khấu LUÔN là đường của phân nhóm tổ chức phát hành — kể cả với
-    # trái phiếu tăng vốn. Phần bù tăng vốn vào sau, dưới dạng disc_delta.
-    bond_group = spec.group
-    zyc_name = f'FI_ZYC_VND_{bond_group}'
+    bond_group = str(row['group'])
+    if tier2 == "Yes":
+        ytm_df = pd.read_csv(os.path.join(CURVE_FOLDER_PATH, f'Tier2_{TIER_2_TYPE}.csv'), index_col=0, parse_dates=True)
+        zyc_name = f'FI_ZYC_VND_{bond_group}_{TIER_2_TYPE}'
+    else:
+        ytm_df = pd.read_csv(os.path.join(CURVE_FOLDER_PATH, f'{bond_group}.csv'), index_col=0, parse_dates=True)
+        zyc_name = f'FI_ZYC_VND_{bond_group}'
     zyc_path = Path(CURVE_FOLDER_PATH) / f"{zyc_name}.csv"
 
     if zyc_path.exists():
         zyc_df = pd.read_csv(zyc_path, index_col=0, parse_dates=True)
-    else:
-        ytm_df = pd.read_csv(os.path.join(CURVE_FOLDER_PATH, f'{bond_group}.csv'),
-                             index_col=0, parse_dates=True)
-        zyc_df = calc_zyc_df(ytm_df)
-        zyc_df.to_csv(zyc_path)     # chỉ ghi khi vừa bootstrap, không ghi đè mỗi vòng
+    else:          
+        zyc_df = calc_zyc_df(bond=row, ytm_df=ytm_df, tier_2_type=TIER_2_TYPE)
 
+    zyc_df.to_csv(zyc_path)
     CurveNode.get(
         zyc_name,
         refresh=True,
     )
 
-    # Hai lượng dịch trạng thái x(t) — KHÔNG phải spread cộng thẳng vào lãi suất
-    # zero. build_legs tự dựng vector bump delta*B_a(tau)/tau.
-    #
-    #   Không tăng vốn   full = OAS          straight = 0
-    #   Tăng vốn         full = OAS + delta  straight = delta
-    #
-    # Chân straight nằm trên đường nhóm (cộng delta nếu tăng vốn) vì đường nhóm
-    # vốn dựng từ trái phiếu KHÔNG quyền chọn — nó đúng là đường cho trái phiếu
-    # không quyền chọn. Hàng dưới đúng bằng "cây tăng vốn có quyền chọn trừ OAS".
-    is_tier2 = parse_tier2_flag(row.get('is_tier2'))
-    oas = (0.0 if oas_df is None
-           else delta_for_bond(oas_df, VALUE_DATE, spec.maturity_date))
-    delta_t2 = (delta_for_bond(spread_df, VALUE_DATE, spec.maturity_date)
-                if is_tier2 and spread_df is not None else 0.0)
-    if is_tier2 and spread_df is None:
-        print("  [!] trái phiếu tăng vốn nhưng chưa có bảng spread -> delta = 0")
-    delta_full, delta_straight = oas + delta_t2, delta_t2
-    print(f"  OAS = {oas * 1e4:+.1f} bp | delta = {delta_t2 * 1e4:+.1f} bp"
-          f" -> full {delta_full * 1e4:+.1f} / straight {delta_straight * 1e4:+.1f}")
-
     with open(HULLWHITE_FILE_PATH, 'r', encoding='utf-8') as f:
         hw_params = json.load(f)
-    # Không hiệu chỉnh Hull-White theo tên nhóm: (a, sigma) lấy từ BASE_CURVE,
-    # xem giải thích ở đầu file. Đường cong `zyc_df` của nhóm vẫn là đường chiết
-    # khấu, và bước quy nạp tiến Arrow-Debreu vẫn khớp MỨC lãi suất vào nó.
-    a_r, sigma_r = A_R, SIGMA_R
+    zyc_params = hw_params.get(zyc_name.lower(), {})
+    if "a" in zyc_params and "sigma" in zyc_params:
+        print(f"Hull-White parameters already exist for {zyc_name}.")
+        print(f"a     = {zyc_params['a']}")
+        print(f"sigma = {zyc_params['sigma']}")
+    else:
+        print(f"Hull-White parameters not found for {zyc_name}.")
+        print("Running Hull-White calibration...")
+        hw = HullWhite.get(zyc_name)
+        result = hw.calibrate(zyc_name, method="kfmh",save=True)
+        with open(HULLWHITE_FILE_PATH, "r", encoding="utf-8") as f:
+            hw_params = json.load(f)
+        zyc_params = hw_params[zyc_name.lower()]
+
+    a_r = zyc_params["a"]
+    sigma_r = zyc_params["sigma"]
 
 
     if ref_curve_name is not None:
         
+        # ref_ytm_df = pd.read_csv(os.path.join(CURVE_FOLDER_PATH, f'{ref_curve_name}.csv'), index_col=0, parse_dates=True)
+        # ref_zyc_name = f'FI_{ref_curve_name}'
+        # ref_zyc_path = Path(CURVE_FOLDER_PATH) / f"{ref_zyc_name}.csv"
+
+        # if ref_zyc_path.exists():
+        #     ref_df_raw = pd.read_csv(ref_zyc_path, index_col=0, parse_dates=True)
+        # else:          
+        #     ref_df_raw = calc_zyc_df(bond=row, ytm_df=ytm_df)
+
+
         ref_df_raw = pd.read_csv(os.path.join(CURVE_FOLDER_PATH, f'{ref_curve_name}.csv'), index_col = 0)
 
         ref_df_raw.index = pd.to_datetime(ref_df_raw.index)
@@ -238,12 +220,17 @@ for i in ROW_SELECTION:
         a_L = ref_curve_params["a"]
         sigma_L = ref_curve_params["sigma"]
 
-        # reset_dates / fixed_rate nay nằm trong BondTermSheet.
-        # rho đo giữa đường cơ bản và đường tham chiếu — đúng cặp nhân tố đang
-        # được mô phỏng, vì động học của chân chiết khấu lấy từ BASE_CURVE.
-        rho_param = float(calc_rho(CURVE_NAMES=[BASE_CURVE, ref_curve_name]).iloc[1, 0])
+        reset_dates = CouponSchedule(
+            df=bond_df[bond_df['bond_id'] == row['bond_id']],
+            holiday_calendar=holiday_calendar,
+            country='vnd'
+        ).bulid_reset_schedule()
+        fixed_rate = None
+        rho_param = float(calc_rho(CURVE_NAMES=[f'{zyc_name}', f'{ref_curve_name}']).iloc[1,0])
         print(f'rho = {rho_param:.6f}')
     else:
+        fixed_rate = [float(x) for x in str(row["annual_coupon_rate"]).split(";")]
+        reset_dates = []
         a_L = 0.0
         sigma_L = 0.0
         rho_param = 0.0
@@ -251,32 +238,64 @@ for i in ROW_SELECTION:
     print("\n" + "-" * 50)
     print(f"{'Scenario':<15} | {'Diff':>20}")
     print("-" * 50)
-    # Bản gốc của sigma, chụp TRƯỚC vòng lặp sốc. Trước đây `sigma_r = 1.25 * sigma_r`
-    # ghi đè chính nó nên hệ số dồn thành 1.25**k: kịch bản 6 dùng 3.81 lần sigma gốc.
-    sigma_r0, sigma_L0 = sigma_r, sigma_L
     for shock in shocks_list:
         if shock == "0":
             disc_df = zyc_df
             ref_df = ref_df_raw
-            sigma_r, sigma_L = sigma_r0, sigma_L0
+            sigma_L = sigma_L
+            sigma_r = sigma_r
         else:
             disc_df = ShockScenario(shock_type=shock, df = zyc_df).create_shock_df()
             ref_df = (ShockScenario(shock_type=shock, df = ref_df_raw).create_shock_df() if ref_df_raw is not None else None)
-            sigma_r, sigma_L = 1.25 * sigma_r0, 1.25 * sigma_L0
+            sigma_r = 1.25 * sigma_r
+            sigma_L = 1.25 * sigma_L
 
-        params = ModelParams(a_r=a_r, sigma_r=sigma_r,
-                             a_L=a_L, sigma_L=sigma_L, rho=rho_param)
-        # Hai chân nằm trên hai đường chiết khấu khác nhau khi OAS != 0.
-        # Khi chưa có bảng OAS, hai delta bằng nhau và hàm đi nhánh một cây,
-        # cho ra đúng hai con số của price_bond cũ.
-        res = price_bond_layered(
-            spec, VALUE_DATE,
-            disc_df=disc_df, ref_df=ref_df, params=params,
-            delta_full=delta_full, delta_straight=delta_straight,
-        )
-        full_price = res.full_price
-        straight_price = res.straight_price
-        diff = res.diff
+        disc_curve = MapCurve(rpd=VALUE_DATE, df = disc_df, convention=DISC_CONVENTION).map_curve()
+        ref_curve = (MapCurve(rpd=VALUE_DATE, df=ref_df, convention=REF_CONVENTION).map_curve() if ref_df is not None else None)
+
+        # -------------------------------------------------------------
+        def build_sched(reading, apply_floor=True, apply_cap=True, _row=row, _call_df=call_df, _put_df=put_df):
+            return build(
+                reading=reading,
+                rpd=VALUE_DATE,
+                face=face_value,
+                maturity_date=maturity_date,
+                coupon_accrual=coupon_accrual,
+                coupon_schedule_df=coupon_schedule_df[coupon_schedule_df['bond_id'] == _row['bond_id']],
+                ref_dates=reset_dates,
+                call_df=_call_df,
+                put_df=_put_df,
+                fixed_rate=fixed_rate,
+                fixing_lag_days=FIXING_LAG_DAYS,
+                ref_curve_name=ref_curve_name,
+                curve_folder=str(CURVE_FOLDER_PATH),
+                ref_convention=REF_CONVENTION,
+                apply_floor=apply_floor,
+                apply_cap=apply_cap,
+                ref_df=ref_df,
+            )
+        def make_tree_for_bond(sched, step_days=step_days, min_step=MIN_STEP_DAYS, **bump_kw):
+            return make_tree(
+                sched,
+                rho_param = rho_param,
+                step_days=step_days,
+                min_step=min_step,
+                disc_curve=disc_curve,
+                ref_curve=ref_curve,
+                a_r=a_r,
+                sigma_r=sigma_r,
+                a_L=a_L,
+                sigma_L=sigma_L,
+                disc_conv=DISC_CONVENTION,
+                ref_conv=REF_CONVENTION,
+                **bump_kw,
+            )
+        # -------------------------------------------------------------
+        sched = build_sched('advance')
+        bond, tree = make_tree_for_bond(sched)
+        full_price = tree.price()
+        straight_price = tree.decompose()['straight']
+        diff = full_price - straight_price
         bond_results.append({
             "bond_id": bond_id,
             "full_price": full_price,
@@ -290,57 +309,8 @@ for i in ROW_SELECTION:
 #%%
 
 pd.DataFrame(bond_results).to_excel(
-    os.path.join(root, 'outputs', 'bond_results_tier2_oas.xlsx'),
+    os.path.join(root, 'outputs', f'bond_results_with_Tier_2_type_{TIER_2_TYPE}.xlsx'),
     index=False,
 )
-
-# Bản kết xuất để so hồi quy. float.hex() là biểu diễn bit-chính xác nên hai lần
-# chạy so được bằng `==` trên chuỗi, không cần dung sai.
-if os.environ.get("CP_DUMP"):
-    import json
-    json.dump(
-        [{k: (v.hex() if isinstance(v, float) else v) for k, v in r.items()}
-         for r in bond_results],
-        open(os.environ["CP_DUMP"], "w"), indent=1, sort_keys=True,
-    )
-    print(f"\n[dump] {len(bond_results)} dòng -> {os.environ['CP_DUMP']}")
         
 #%%
-
-# {
-#     "sob4": {
-#         "a": 0.8304433648620897,
-#         "sigma": 0.03306253921457648,
-#         "sigma_eps": 0.004898657265031288
-#     },
-#     "fi_zyc_vnd_lb_g1": {
-#         "a": 0.18273340792314074,
-#         "sigma": 0.017431052919058356,
-#         "sigma_eps": 0.00402804405685867
-#     },
-#     "fi_zyc_vnd_lb_g2": {
-#         "a": 0.1897463628519041,
-#         "sigma": 0.021410942539161926,
-#         "sigma_eps": 0.00391402745795776
-#     },
-#     "fi_zyc_vnd_lb_g3": {
-#         "a": 1.026880483917802,
-#         "sigma": 0.0220283426472668,
-#         "sigma_eps": 0.007166656633431443
-#     },
-#     "fi_zyc_vnd_tier2_vbma": {
-#         "a": 0.028014582243074265,
-#         "sigma": 0.018533583408884276,
-#         "sigma_eps": 0.0044531087197577915
-#     },
-#     "fi_zyc_vnd_tier2_vbma_bond_fi": {
-#         "a": 0.30115535542342386,
-#         "sigma": 0.022524596720666347,
-#         "sigma_eps": 0.004204820470760032
-#     },
-#     "fi_zyc_vnd_vbma_bond_fi": {
-#         "a": 0.3302591457703021,
-#         "sigma": 0.018575040457465497,
-#         "sigma_eps": 0.0036858966865396174
-#     }
-# }

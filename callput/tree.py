@@ -23,7 +23,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from .lattice import Lattice
-from .leg import CurveLeg, hw_B
+from .leg import CurveLeg
 from .schedule import CompiledBond, FixingGroup, Period
 
 
@@ -78,55 +78,41 @@ class CallPutTree:
         # lets the collapse be one call to np.diagonal for both engines.
         self.fix_factor = self.lat.factors[-1]
 
-        self.phi = np.empty(bond.n_steps)
+        days = bond.days
         self.step_discount = []
+        for i in range(bond.n_steps):
+            a_coef, b_coef = disc_leg.affine_zcb(int(days[i]), int(days[i + 1]))
+            self.step_discount.append(
+                a_coef * np.exp(-b_coef * self.lat.factors[0].x[i])
+            )
         self._fit_to_curve()
 
     def _fit_to_curve(self) -> None:
-        """Solve ``phi(t)`` by forward induction so the lattice reprices the curve.
+        """Rescale each step's discount so the lattice reprices the curve exactly.
 
-        The node rate over step ``i`` is the **step-length rate**, not an
-        instantaneous short rate::
+        The affine node rates of :class:`src.hw_tree.HullWhiteTree` reproduce the
+        market curve only up to the tree's discretisation of the Gaussian -- a
+        residual of a few tenths of a basis point of face, which
+        ``curve_repricing_error`` was there to report.  It is small but systematic,
+        and it does not cancel between a base and a shocked run.
 
-            R_i(j) = [B(dt_i) / dt_i] * x_j + phi_i
-
-        The ``B(dt)/dt`` coefficient matters because ``dt`` is not small: it is
-        ``1 - a dt / 2`` to first order, 0.9948 at a 21-day step and 0.9776 at a
-        quarterly one.  Using ``r = x + phi`` instead leaves an O(a dt) bias in how
-        the one-step discount responds to ``x``.  The curve fit hides it -- both
-        forms reprice the curve exactly -- so it surfaces only in the optionality:
-        measured on a 10-year callable, it overstates the call by 1.1 bp of face at
-        a 21-day step and 4.6 bp at a quarterly one.
-
-        ``phi_i`` is the only unknown and it is common to every node of the step, so
-        the Arrow-Debreu condition solves it in closed form::
-
-            sum_j Q_i(j) * exp(-R_i(j) * dt_i) = P(0, t_{i+1})
-
-            phi_i = ln( sum_j Q_i(j) exp(-B(dt_i) x_j) / P(0, t_{i+1}) ) / dt_i
-
-        with ``Q`` the Arrow-Debreu prices carried forward, ``Q_0 = 1``.  Nothing is
-        taken from the continuous-time model: no ``A(t,T)``, no convexity term.  An
-        earlier version seeded ``A`` analytically and corrected it by a scalar per
-        step; the seed cancels identically between the numerator and denominator of
-        that scalar, so this is the same tree with the redundant term removed
-        (verified: 1.1e-15 per node, prices equal to 1e-12 bp).
+        Hull's remedy, at a scalar per step: carry Arrow-Debreu prices forward and
+        scale step ``i``'s discount by ``P(0, t_{i+1}) / sum_j Q_j D_j``.  A single
+        multiplier per step suffices because the correction is a parallel shift of
+        that step's rate, and it leaves the branch probabilities untouched.
 
         Only the discount factor is involved, so the induction runs on the first
         factor alone; the correlation matrices have zero row and column sums, so a
         two-factor joint reproduces that factor's marginal exactly.
         """
         factor = self.lat.factors[0]
-        days = self.bond.days
         weights = np.ones(1)
         for i in range(self.bond.n_steps):
-            dt = (int(days[i + 1]) - int(days[i])) / self.disc.denom
-            raw = np.exp(-hw_B(self.disc.a, dt) * factor.x[i])
-            target = self.disc.discount(int(days[i + 1]))
-            self.phi[i] = np.log(float((weights * raw).sum()) / target) / dt
-            step = np.exp(-self.phi[i] * dt) * raw
-            self.step_discount.append(step)
-            flow = weights * step
+            target = self.disc.discount(int(self.bond.days[i + 1]))
+            self.step_discount[i] = self.step_discount[i] * (
+                target / float((weights * self.step_discount[i]).sum())
+            )
+            flow = weights * self.step_discount[i]
             nxt = np.zeros(int(factor.n[i + 1]))
             for branch in range(3):
                 np.add.at(
