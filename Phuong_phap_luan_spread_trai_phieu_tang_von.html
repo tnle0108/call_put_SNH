@@ -1,0 +1,1381 @@
+<title>Spread Trái phiếu Tăng vốn</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,400;0,600;0,700;1,400;1,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+
+<style>
+:root{
+  --paper:#f2f4f3; --card:#fbfcfb; --ink:#131e1c; --body:#2c3a37; --muted:#5f6f6b;
+  --rule:#d5dcd9; --rule-soft:#e4e9e7;
+  --accent:#0d6157; --accent-soft:#e6f0ee; --accent-line:#9ec8c1;
+  --warn:#9c4a2f; --warn-soft:#f7ece7;
+  --ok:#3f6b34;
+  --code-bg:#e9edeb;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#0c1211; --card:#141d1b; --ink:#e9efec; --body:#c3cfcb; --muted:#8a9b96;
+    --rule:#26332f; --rule-soft:#1c2725;
+    --accent:#5cbdae; --accent-soft:#152825; --accent-line:#2f5d56;
+    --warn:#e09274; --warn-soft:#2a1b16;
+    --ok:#8fc07e;
+    --code-bg:#1a2422;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#0c1211; --card:#141d1b; --ink:#e9efec; --body:#c3cfcb; --muted:#8a9b96;
+  --rule:#26332f; --rule-soft:#1c2725;
+  --accent:#5cbdae; --accent-soft:#152825; --accent-line:#2f5d56;
+  --warn:#e09274; --warn-soft:#2a1b16;
+  --ok:#8fc07e;
+  --code-bg:#1a2422;
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--paper); color:var(--body);
+  font-family:"IBM Plex Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  font-size:16px; line-height:1.62; margin:0;
+  padding-inline:24px; padding-block:0;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:880px; margin:0 auto}
+
+/* ---------- masthead ---------- */
+.mast{padding-block:64px 40px; border-bottom:1px solid var(--rule)}
+.eyebrow{
+  font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:11.5px; font-weight:500;
+  letter-spacing:.14em; text-transform:uppercase; color:var(--accent); margin:0 0 20px;
+}
+h1{
+  font-family:Spectral,Georgia,serif; font-weight:700; color:var(--ink);
+  font-size:clamp(34px,6vw,50px); line-height:1.08; letter-spacing:-.015em;
+  margin:0 0 20px; text-wrap:balance;
+}
+.standfirst{font-size:19px; line-height:1.58; color:var(--body); margin:0; max-width:56ch}
+.standfirst em{font-style:italic; color:var(--ink)}
+
+/* ---------- sections ---------- */
+section{padding-block:50px; border-bottom:1px solid var(--rule-soft)}
+section:last-of-type{border-bottom:0}
+.snum{
+  font-family:"IBM Plex Mono",monospace; font-size:12px; font-weight:500;
+  letter-spacing:.1em; color:var(--accent); display:block; margin-bottom:10px;
+}
+h2{
+  font-family:Spectral,Georgia,serif; font-weight:600; color:var(--ink);
+  font-size:clamp(25px,3.4vw,31px); line-height:1.18; letter-spacing:-.01em;
+  margin:0 0 8px; text-wrap:balance;
+}
+.dek{font-size:16.5px; color:var(--muted); margin:0 0 26px; max-width:58ch}
+h3{
+  font-family:Spectral,Georgia,serif; font-weight:600; color:var(--ink);
+  font-size:20px; line-height:1.3; margin:36px 0 12px; text-wrap:balance;
+}
+h4{
+  font-family:"IBM Plex Mono",monospace; font-weight:500; font-size:11.5px;
+  letter-spacing:.1em; text-transform:uppercase; color:var(--muted);
+  margin:28px 0 10px;
+}
+p{margin:0 0 15px; max-width:64ch}
+ul,ol{margin:0 0 15px; padding-left:20px; max-width:64ch}
+li{margin-bottom:7px}
+li::marker{color:var(--accent)}
+strong{color:var(--ink); font-weight:600}
+code{
+  font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:.85em;
+  background:var(--code-bg); padding:1px 5px; border-radius:3px; color:var(--ink);
+}
+
+/* ---------- math ---------- */
+.eq{
+  display:flex; align-items:center; gap:16px; margin:22px 0;
+  padding:20px 24px; background:var(--card); border:1px solid var(--rule);
+  border-radius:3px; overflow-x:auto;
+}
+.eq > .num{
+  font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--muted);
+  flex:none; margin-left:auto; padding-left:8px;
+}
+.al{
+  display:grid; grid-template-columns:max-content max-content 1fr;
+  gap:14px 10px; align-items:baseline; flex:1; min-width:0;
+}
+.al > .l{justify-self:end; text-align:right}
+.al > .r{justify-self:start}
+.al > .w{grid-column:1 / -1; justify-self:start; font-size:13.5px; color:var(--muted);
+         font-family:"IBM Plex Sans",sans-serif; font-style:normal; padding-top:2px}
+.one{flex:1; min-width:0}
+
+/* ma toán */
+.al, .one, .mi{
+  font-family:Spectral,Georgia,serif; font-size:18px; color:var(--ink); line-height:1.5;
+}
+.v{font-style:italic}
+.f{font-style:normal}
+sub,sup{font-size:.66em; font-style:normal}
+sub{vertical-align:-.3em}
+sup{vertical-align:.5em}
+
+.frac{display:inline-flex; flex-direction:column; align-items:center;
+      vertical-align:-.62em; margin:0 .22em; line-height:1.25}
+.frac > .n{border-bottom:1px solid currentColor; padding:0 .4em .12em}
+.frac > .d{padding:.12em .4em 0}
+.frac.sm{font-size:.84em; vertical-align:-.56em}
+
+.br{font-size:1.28em; font-style:normal; line-height:1}
+.sq{font-style:normal}
+.cm{font-family:"IBM Plex Sans",sans-serif; font-style:normal; font-size:13.5px;
+    color:var(--muted); padding-left:14px}
+
+/* khoi ma nguon / bang so trong cong thuc */
+pre.blk{
+  font-family:"IBM Plex Mono",monospace; font-size:13.5px; line-height:1.72;
+  background:var(--card); border:1px solid var(--rule); border-radius:3px;
+  padding:16px 20px; overflow-x:auto; margin:20px 0; color:var(--ink);
+}
+
+/* ---------- callouts ---------- */
+.note{
+  margin:22px 0; padding:18px 20px; border-radius:3px; border:1px solid var(--rule);
+  background:var(--card); font-size:15px; line-height:1.58;
+}
+.note > :last-child{margin-bottom:0}
+.note p{max-width:none}
+.note .tag{
+  font-family:"IBM Plex Mono",monospace; font-size:10.5px; letter-spacing:.12em;
+  text-transform:uppercase; font-weight:500; display:block; margin-bottom:8px;
+}
+.note.warn{background:var(--warn-soft); border-color:var(--warn)}
+.note.warn .tag{color:var(--warn)}
+.note.key{background:var(--accent-soft); border-color:var(--accent-line)}
+.note.key .tag{color:var(--accent)}
+.note .eq{margin:12px 0; background:transparent; border:0; padding:0}
+
+/* ---------- tables ---------- */
+.tw{overflow-x:auto; margin:22px 0; border:1px solid var(--rule); border-radius:3px; background:var(--card)}
+table{border-collapse:collapse; width:100%; font-size:14px}
+th,td{padding:9px 14px; text-align:left; border-bottom:1px solid var(--rule-soft); vertical-align:top}
+thead th{
+  font-family:"IBM Plex Mono",monospace; font-size:11px; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--muted); font-weight:500;
+  border-bottom:1px solid var(--rule); white-space:nowrap; background:var(--paper);
+}
+tbody tr:last-child td{border-bottom:0}
+td.n,th.n{text-align:right; font-family:"IBM Plex Mono",monospace;
+          font-variant-numeric:tabular-nums; white-space:nowrap}
+td.m{font-family:"IBM Plex Mono",monospace; font-size:13px; white-space:nowrap}
+.good{color:var(--ok); font-weight:500}
+.bad{color:var(--warn); font-weight:500}
+
+/* ---------- steps ---------- */
+.steps{counter-reset:st; margin:24px 0}
+.step{display:grid; grid-template-columns:34px 1fr; gap:18px; padding-bottom:26px; position:relative}
+.step:not(:last-child)::before{content:""; position:absolute; left:16px; top:36px; bottom:0;
+  width:1px; background:var(--rule)}
+.step::after{
+  counter-increment:st; content:counter(st);
+  position:absolute; left:0; top:0; width:34px; height:34px; border-radius:50%;
+  display:grid; place-items:center; border:1px solid var(--accent-line);
+  background:var(--card); color:var(--accent);
+  font-family:"IBM Plex Mono",monospace; font-size:13px;
+}
+.step > .b{grid-column:2; min-width:0; padding-top:3px}
+.step > .b > :first-child{margin-top:0}
+.step > .b > :last-child{margin-bottom:0}
+.step h3{font-size:17.5px; margin:0 0 10px}
+
+/* ---------- chart ---------- */
+figure{margin:28px 0}
+figure svg{display:block; width:100%; height:auto}
+figcaption{font-size:13.5px; color:var(--muted); margin-top:12px; line-height:1.5; max-width:62ch}
+.legend{display:flex; flex-wrap:wrap; gap:18px; margin-bottom:12px; font-size:13px;
+        font-family:"IBM Plex Mono",monospace}
+.legend span{display:inline-flex; align-items:center; gap:7px}
+.swatch{width:16px; height:3px; border-radius:2px; flex:none}
+
+footer{padding-block:40px 70px; border-top:1px solid var(--rule); margin-top:16px}
+footer p{font-size:13.5px; color:var(--muted)}
+
+@media (max-width:600px){
+  body{padding-inline:18px; font-size:15.5px}
+  .mast{padding-block:44px 30px}
+  section{padding-block:38px}
+  .eq{padding:15px 16px; gap:10px}
+  .al,.one,.mi{font-size:16px}
+  .al{gap:11px 7px}
+  .cm{display:block; padding-left:0; padding-top:3px}
+  .step{grid-template-columns:28px 1fr; gap:13px}
+  .step::after{width:28px; height:28px; font-size:12px}
+  .step:not(:last-child)::before{left:13px; top:31px}
+}
+</style>
+
+<div class="wrap">
+
+<header class="mast">
+  <p class="eyebrow">VCB Quant · IRRBB · Phương án đề xuất</p>
+  <h1>Spread trái phiếu tăng vốn</h1>
+  <p class="standfirst">
+    Thay đường cong Tier 2 dựng tay trong Excel bằng một <em>spread suy ra từ giá thị trường</em>,
+    cộng trực tiếp vào biến trạng thái <span class="mi"><span class="v">x</span>(<span class="v">t</span>)</span>
+    của cây Hull-White.
+  </p>
+
+  <div class="eq" style="margin-top:34px; border-left:3px solid var(--accent)">
+    <div class="one">
+      <span class="v">R</span><sub>T2</sub>(<span class="v">t</span>,<span class="v">T</span>)
+      &nbsp;=&nbsp;
+      <span class="v">R</span><sub>G</sub>(<span class="v">t</span>,<span class="v">T</span>)
+      &nbsp;+&nbsp; <span class="v">δ</span> ·
+      <span class="frac"><span class="n"><span class="v">B<sub>a</sub></span>(<span class="v">τ</span>)</span><span class="d"><span class="v">τ</span></span></span>
+    </div>
+  </div>
+  <p style="margin-top:-4px; color:var(--muted); font-size:14.5px; max-width:62ch">
+    Trái phiếu tăng vốn chiết khấu trên đường LSCK của phân nhóm tổ chức phát hành, cộng một lượng
+    <code>δ</code> vào <code>x(t)</code>. Vì hệ số truyền của <code>x</code> sang lãi suất kỳ hạn là
+    <code>B<sub>a</sub>(τ)/τ</code>, phần bù <strong>suy giảm theo kỳ hạn</strong> — không phải một phép
+    dịch song song.
+  </p>
+</header>
+
+
+<!-- ===================== 01 ===================== -->
+<section>
+  <span class="snum">01</span>
+  <h2>Vì sao phải thay</h2>
+  <p class="dek">Đường Tier 2 đang dùng không gắn với giá thị trường của bất kỳ trái phiếu tăng vốn nào.</p>
+
+  <p>Hôm nay <code>group == "Tier2"</code> dẫn tới một đường cong riêng, dựng trong
+    <code>vbma_buffer_tool.xlsx</code> rồi bootstrap thành <code>FI_ZYC_VND_Tier2_VBMA_Bond_FI.csv</code>.
+    Đối chiếu số liệu cho thấy nó chỉ là phép dịch song song toàn đường, và đổi dấu theo ngày:</p>
+
+  <div class="tw">
+    <table>
+      <thead><tr><th>Ngày</th><th class="n">Tier 2 so với <code>vbma_bond_fi</code></th><th>Cấu trúc kỳ hạn</th></tr></thead>
+      <tbody>
+        <tr><td class="m">31/03/2026</td><td class="n bad">+0,715%</td><td>phẳng toàn bộ 18 kỳ hạn</td></tr>
+        <tr><td class="m">18/08/2026</td><td class="n bad">−1,149%</td><td>phẳng toàn bộ 18 kỳ hạn</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Ba vấn đề: phần bù <strong>âm</strong> ở một số ngày — trái phiếu tăng vốn rẻ hơn trái phiếu thường
+    cùng tổ chức phát hành, khó giải trình; <strong>không có cấu trúc kỳ hạn</strong>; và
+    <strong>sống ngoài code</strong>, trong một bảng tính không có vết kiểm toán.</p>
+
+  <p>Phương án đề xuất thay cả ba: spread tính ngược từ giá dirty quan sát được, cấu trúc kỳ hạn sinh ra
+    từ chính động học của mô hình, toàn bộ nằm trong pipeline Python với nhật ký từng quan sát.</p>
+</section>
+
+
+<!-- ===================== 02 ===================== -->
+<section>
+  <span class="snum">02</span>
+  <h2>Mô hình</h2>
+  <p class="dek">Dẫn từ lãi suất ngắn hạn xuống công thức affine — rồi bỏ lãi suất ngắn hạn đi.</p>
+
+  <div class="steps">
+
+    <div class="step"><div class="b">
+      <h3><span class="mi"><span class="v">x</span>(<span class="v">t</span>)</span> là gì</h3>
+      <p>Hull-White mở rộng Vasicek cho lãi suất ngắn hạn:</p>
+      <div class="eq">
+        <div class="al">
+          <span class="l"><span class="v">dr</span>(<span class="v">t</span>)</span>
+          <span>=</span>
+          <span class="r"><span class="br">[</span> <span class="v">θ</span>(<span class="v">t</span>) − <span class="v">a</span>·<span class="v">r</span>(<span class="v">t</span>) <span class="br">]</span> <span class="v">dt</span> &nbsp;+&nbsp; <span class="v">σ</span>·<span class="v">dW</span>(<span class="v">t</span>)</span>
+        </div>
+        <span class="num">(1)</span>
+      </div>
+      <p>Tách phần tất định khỏi phần ngẫu nhiên bằng
+        <span class="mi"><span class="v">r</span> = <span class="v">x</span> + <span class="v">α</span></span>, tức:</p>
+      <div class="eq">
+        <div class="al">
+          <span class="l"><span class="v">x</span>(<span class="v">t</span>)</span>
+          <span>=</span>
+          <span class="r"><span class="v">r</span>(<span class="v">t</span>) − <span class="v">α</span>(<span class="v">t</span>)
+            <span class="cm">α tất định, α(0) = r(0) ⟹ x(0) = 0</span></span>
+        </div>
+        <span class="num">(2)</span>
+      </div>
+      <p>Thay vào (1) và chọn
+        <span class="mi"><span class="v">θ</span> = <span class="v">α</span>′ + <span class="v">a</span><span class="v">α</span></span>,
+        phần tất định triệt tiêu hết. <span class="mi"><span class="v">x</span></span> thành một
+        Ornstein–Uhlenbeck <strong>hồi quy về 0</strong>, không còn tham số nào của đường cong:</p>
+      <div class="eq">
+        <div class="al">
+          <span class="l"><span class="v">dx</span></span>
+          <span>=</span>
+          <span class="r">−<span class="v">a</span>·<span class="v">x</span>·<span class="v">dt</span> &nbsp;+&nbsp; <span class="v">σ</span>·<span class="v">dW</span>
+            <span class="cm">x(0) = 0</span></span>
+        </div>
+        <span class="num">(3)</span>
+      </div>
+      <p>Toàn bộ thông tin đường cong nằm trong <code>α</code>; toàn bộ tính ngẫu nhiên nằm trong
+        <code>x</code>. <strong>Đây là lý do spread cộng vào <code>x</code></strong> chứ không vào
+        <code>α</code>: nó là một cú dịch trạng thái, dùng lại nguyên động học của nhóm tổ chức phát hành.</p>
+    </div></div>
+
+    <div class="step"><div class="b">
+      <h3>Tích phân của <span class="mi"><span class="v">x</span></span> là Gauss</h3>
+      <p>Giá ZCB là kỳ vọng của chiết khấu tích luỹ; phần tất định tách ra ngoài:</p>
+      <div class="eq">
+        <div class="al">
+          <span class="l"><span class="v">P</span>(<span class="v">t</span>,<span class="v">T</span>)</span>
+          <span>=</span>
+          <span class="r"><span class="f">E</span><sub>t</sub><span class="br">[</span> <span class="f">exp</span>(−∫<sub>t</sub><sup>T</sup> <span class="v">r</span>) <span class="br">]</span>
+            &nbsp;=&nbsp; <span class="f">exp</span>(−∫<sub>t</sub><sup>T</sup> <span class="v">α</span>) ·
+            <span class="f">E</span><sub>t</sub><span class="br">[</span> <span class="f">exp</span>(−∫<sub>t</sub><sup>T</sup> <span class="v">x</span>) <span class="br">]</span></span>
+        </div>
+        <span class="num">(4)</span>
+      </div>
+      <p>Nghiệm của (3) cho
+        <span class="mi"><span class="v">x</span>(<span class="v">u</span>) = <span class="v">x</span>(<span class="v">t</span>)<span class="v">e</span><sup>−a(u−t)</sup> + <span class="v">σ</span>∫<span class="v">dW</span></span>.
+        Lấy tích phân theo <span class="mi"><span class="v">u</span></span> rồi đổi thứ tự tích phân:</p>
+      <div class="eq">
+        <div class="al">
+          <span class="l">∫<sub>t</sub><sup>T</sup> <span class="v">x</span>(<span class="v">u</span>) <span class="v">du</span></span>
+          <span>=</span>
+          <span class="r"><span class="v">x</span>(<span class="v">t</span>)·<span class="v">B<sub>a</sub></span>(<span class="v">τ</span>)
+            &nbsp;+&nbsp; <span class="v">σ</span>·∫<sub>t</sub><sup>T</sup> <span class="v">B<sub>a</sub></span>(<span class="v">T</span>−<span class="v">v</span>)·<span class="v">dW<sub>v</sub></span></span>
+
+          <span class="l">kỳ vọng</span>
+          <span>=</span>
+          <span class="r"><span class="v">x</span>(<span class="v">t</span>) · <span class="v">B<sub>a</sub></span>(<span class="v">τ</span>)</span>
+
+          <span class="l">phương sai</span>
+          <span>=</span>
+          <span class="r"><span class="v">σ</span><sup>2</sup>∫<sub>0</sub><sup>τ</sup> <span class="v">B<sub>a</sub></span>(<span class="v">s</span>)<sup>2</sup> <span class="v">ds</span>
+            &nbsp;≡&nbsp; <span class="v">G<sub>a</sub></span>(<span class="v">τ</span>)</span>
+        </div>
+        <span class="num">(5)</span>
+      </div>
+      <p style="font-size:14px; color:var(--muted)">Với
+        <span class="mi"><span class="v">B<sub>a</sub></span>(<span class="v">τ</span>) =
+        <span class="frac sm"><span class="n">1 − <span class="v">e</span><sup>−aτ</sup></span><span class="d"><span class="v">a</span></span></span></span>.
+        <code>B<sub>a</sub></code> và <code>G<sub>a</sub></code> chính là <code>hw_B</code>,
+        <code>hw_G</code> trong <code>callput/leg.py</code>.</p>
+    </div></div>
+
+    <div class="step"><div class="b">
+      <h3>Ra dạng affine</h3>
+      <p>Với <span class="mi"><span class="v">Z</span></span> Gauss,
+        <span class="mi"><span class="f">E</span>[<span class="v">e</span><sup>Z</sup>] = <span class="f">exp</span>(<span class="f">E</span>[<span class="v">Z</span>] + ½<span class="f">Var</span>[<span class="v">Z</span>])</span>.
+        Đặt <span class="mi"><span class="v">Z</span> = −∫<span class="v">x</span></span> và dùng (5):</p>
+      <div class="eq">
+        <div class="al">
+          <span class="l"><span class="v">P</span>(<span class="v">t</span>,<span class="v">T</span>)</span>
+          <span>=</span>
+          <span class="r"><span class="v">A</span>(<span class="v">t</span>,<span class="v">T</span>) ·
+            <span class="f">exp</span><span class="br">(</span> −<span class="v">B<sub>a</sub></span>(<span class="v">τ</span>) · <span class="v">x</span>(<span class="v">t</span>) <span class="br">)</span></span>
+
+          <span class="l"><span class="v">A</span>(<span class="v">t</span>,<span class="v">T</span>)</span>
+          <span>=</span>
+          <span class="r"><span class="f">exp</span><span class="br">(</span> −∫<sub>t</sub><sup>T</sup> <span class="v">α</span> &nbsp;+&nbsp; ½·<span class="v">G<sub>a</sub></span>(<span class="v">τ</span>) <span class="br">)</span>
+            <span class="cm">tất định, không phụ thuộc x</span></span>
+        </div>
+        <span class="num">(6)</span>
+      </div>
+      <p><strong>Đây là tính affine:</strong> <span class="mi"><span class="f">ln</span> <span class="v">P</span></span>
+        tuyến tính theo <span class="mi"><span class="v">x</span>(<span class="v">t</span>)</span>, hệ số
+        <span class="mi">−<span class="v">B<sub>a</sub></span>(<span class="v">τ</span>)</span>.</p>
+    </div></div>
+
+    <div class="step"><div class="b">
+      <h3>Ra công thức <span class="mi"><span class="v">R</span>(<span class="v">t</span>,<span class="v">T</span>)</span></h3>
+      <p>Lãi suất kỳ hạn gộp liên tục là
+        <span class="mi">−<span class="f">ln</span> <span class="v">P</span> / <span class="v">τ</span></span>.
+        Lấy log (6) rồi chia <span class="mi">−<span class="v">τ</span></span>:</p>
+      <div class="eq">
+        <div class="al">
+          <span class="l"><span class="v">R</span>(<span class="v">t</span>,<span class="v">T</span>)</span>
+          <span>=</span>
+          <span class="r"><span class="frac"><span class="n"><span class="v">B<sub>a</sub></span>(<span class="v">τ</span>)</span><span class="d"><span class="v">τ</span></span></span>
+            · <span class="v">x</span>(<span class="v">t</span>) &nbsp;+&nbsp; <span class="v">φ</span>(<span class="v">τ</span>)</span>
+
+          <span class="l"><span class="v">φ</span>(<span class="v">τ</span>)</span>
+          <span>=</span>
+          <span class="r">−<span class="frac"><span class="n"><span class="f">ln</span> <span class="v">A</span>(<span class="v">t</span>,<span class="v">T</span>)</span><span class="d"><span class="v">τ</span></span></span></span>
+        </div>
+        <span class="num">(7)</span>
+      </div>
+      <p>Hệ số truyền <code>B<sub>a</sub>(τ)/τ</code> bằng 1 khi <code>τ → 0</code> và tiến về
+        <code>1/(aτ)</code> khi <code>τ</code> lớn. <strong>Đó là toàn bộ nguồn gốc của việc spread suy
+        giảm theo kỳ hạn.</strong></p>
+    </div></div>
+
+    <div class="step"><div class="b">
+      <h3>Khớp <span class="mi"><span class="v">α</span></span> vào đường cong — ra đúng code</h3>
+      <p>Buộc mô hình tái tạo đường cong quan sát. Tại
+        <span class="mi"><span class="v">t</span> = 0</span> thì
+        <span class="mi"><span class="v">x</span>(0) = 0</span> nên
+        <span class="mi"><span class="v">P</span>(0,<span class="v">T</span>) = <span class="v">A</span>(0,<span class="v">T</span>)</span>, cho
+        <span class="mi">∫<sub>0</sub><sup>T</sup><span class="v">α</span> = −<span class="f">ln</span> <span class="v">P</span>(0,<span class="v">T</span>) + ½<span class="v">G<sub>a</sub></span>(<span class="v">T</span>)</span>.
+        Trừ hai vế cho <span class="mi"><span class="v">t</span></span> rồi thay vào (6):</p>
+      <div class="eq">
+        <div class="al">
+          <span class="l"><span class="v">A</span>(<span class="v">t</span>,<span class="v">T</span>)</span>
+          <span>=</span>
+          <span class="r"><span class="frac"><span class="n"><span class="v">P</span>(0,<span class="v">T</span>)</span><span class="d"><span class="v">P</span>(0,<span class="v">t</span>)</span></span>
+            · <span class="f">exp</span><span class="br">(</span> ½ <span class="br">[</span>
+            <span class="v">G<sub>a</sub></span>(<span class="v">τ</span>) − <span class="v">G<sub>a</sub></span>(<span class="v">T</span>) + <span class="v">G<sub>a</sub></span>(<span class="v">t</span>)
+            <span class="br">]</span> <span class="br">)</span></span>
+        </div>
+        <span class="num">(8)</span>
+      </div>
+      <p>Đây <strong>đúng từng ký tự</strong> là <code>CurveLeg.affine_zcb</code>
+        (<code>callput/leg.py:154-165</code>). Kiểm tính chất bắt buộc: tại <code>t = 0</code> thì
+        <code>G<sub>a</sub>(0) = 0</code> nên số hạng lồi bằng 0 và <code>A(0,T) = P(0,T)</code> — mô hình
+        tái tạo đúng đường cong đầu vào.</p>
+    </div></div>
+
+  </div>
+
+  <div class="note key">
+    <span class="tag">Nối với quantmr — hai thư viện đặt gốc trạng thái khác nhau</span>
+    <p><code>quantmr.HullWhite.zero_rate</code> dùng số hạng lồi
+      <code>−½B<sub>a</sub>(τ)²V(t)</code>, khác hẳn (8). Khai triển phương sai của tích phân — chú ý số
+      hạng <code>B²V</code> rất dễ bỏ sót — cho đồng nhất thức, kiểm số trên tám cặp
+      <code>(t,T)</code> sai số lớn nhất <strong>8,6e−18</strong>:</p>
+    <div class="eq">
+      <div class="al">
+        <span class="l">½<span class="br">[</span><span class="v">G<sub>a</sub></span>(<span class="v">τ</span>) − <span class="v">G<sub>a</sub></span>(<span class="v">T</span>) + <span class="v">G<sub>a</sub></span>(<span class="v">t</span>)<span class="br">]</span></span>
+        <span>=</span>
+        <span class="r">−½·<span class="v">B<sub>a</sub></span>(<span class="v">τ</span>)<sup>2</sup>·<span class="v">V</span>(<span class="v">t</span>)
+          &nbsp;−&nbsp; <span class="v">B<sub>a</sub></span>(<span class="v">τ</span>)·<span class="v">μ</span>(<span class="v">t</span>)</span>
+      </div>
+    </div>
+    <p>Chênh lệch đúng bằng <code>−B<sub>a</sub>(τ)μ(t)</code> với
+      <code>μ(t) = σ²(1−e<sup>−at</sup>)²/(2a²)</code>, tức hai thư viện <strong>nhất quán</strong> nhưng
+      lệch gốc trạng thái một lượng <code>μ(t)</code>: <code>x<sub>quantmr</sub> = x<sub>callput</sub> + μ(t)</code>.
+      <code>callput</code> dùng trạng thái trung bình 0 để định giá, <code>quantmr</code> dùng trạng thái
+      trung bình <code>μ(t)</code> để lọc và dự báo. Đây cũng là lý do <code>calc_rho</code> khử trôi bằng
+      <code>x̃ = e<sup>at</sup>(x̂ − μ<sub>t</sub>)</code> trước khi lấy sai phân.</p>
+  </div>
+
+  <h3>Spread là một cú dịch trạng thái</h3>
+  <p>Thay <span class="mi"><span class="v">x</span> → <span class="v">x</span> + <span class="v">δ</span></span>
+    vào (7). <span class="mi"><span class="v">φ</span></span> không đổi:</p>
+  <div class="eq">
+    <div class="al">
+      <span class="l"><span class="v">R</span><sub>T2</sub>(<span class="v">t</span>,<span class="v">T</span>)</span>
+      <span>=</span>
+      <span class="r"><span class="frac"><span class="n"><span class="v">B<sub>a</sub></span>(<span class="v">τ</span>)</span><span class="d"><span class="v">τ</span></span></span>
+        <span class="br">(</span><span class="v">x</span>(<span class="v">t</span>) + <span class="v">δ</span><span class="br">)</span> + <span class="v">φ</span>(<span class="v">τ</span>)
+        &nbsp;=&nbsp; <span class="v">R</span><sub>G</sub>(<span class="v">t</span>,<span class="v">T</span>)
+        &nbsp;+&nbsp; <span class="v">δ</span> · <span class="frac"><span class="n"><span class="v">B<sub>a</sub></span>(<span class="v">τ</span>)</span><span class="d"><span class="v">τ</span></span></span></span>
+
+      <span class="l"><span class="v">P</span><sub>T2</sub>(<span class="v">t</span>,<span class="v">T</span>)</span>
+      <span>=</span>
+      <span class="r"><span class="v">P</span><sub>G</sub>(<span class="v">t</span>,<span class="v">T</span>) ·
+        <span class="f">exp</span><span class="br">(</span>−<span class="v">B<sub>a</sub></span>(<span class="v">τ</span>)·<span class="v">δ</span><span class="br">)</span>
+        <span class="cm">kiểm số: 1,1e−16</span></span>
+    </div>
+    <span class="num">(9)</span>
+  </div>
+  <p><strong>Đó là toàn bộ đặc tả.</strong> Một mô hình Hull-White với <code>(a, σ)</code> cho trước được
+    xác định hoàn toàn bởi đường cong đầu vào, nên chỉ cần nói đường cong Tier 2 là gì; mọi thứ bên trong
+    cây suy ra từ đó.</p>
+
+  <figure>
+    <div class="legend">
+      <span><i class="swatch" style="background:var(--accent)"></i> LB_G1 · a = 0,1827</span>
+      <span><i class="swatch" style="background:var(--muted)"></i> LB_G2 · a = 0,1897</span>
+      <span><i class="swatch" style="background:var(--warn)"></i> LB_G3 · a = 1,0269</span>
+    </div>
+    <svg id="decay" viewBox="0 0 760 320" role="img"
+         aria-label="Hệ số B(tau)/tau suy giảm theo kỳ hạn cho ba phân nhóm tổ chức phát hành"></svg>
+    <figcaption>
+      Hệ số truyền <code>B<sub>a</sub>(τ)/τ</code> theo kỳ hạn, thang log. Cùng một <code>δ</code>, phần bù
+      ở 30 năm chỉ còn 18% mức đầu ngắn với LB_G1 — và 3% với LB_G3, nơi <code>a</code> lớn gấp 5,6 lần.
+    </figcaption>
+  </figure>
+
+  <div class="note warn">
+    <span class="tag">Cần nói rõ trong tài liệu phương pháp luận</span>
+    <p>Trực giác thường mong đợi phần bù tăng vốn <strong>tăng</strong> theo kỳ hạn. Cơ chế <code>x(t)</code>
+      cho nó <strong>giảm</strong>: với <code>δ = 143 bp</code> và LB_G1, phần bù ở 30Y chỉ còn 26 bp. Đây
+      là hệ quả trực tiếp của việc spread sống trong không gian trạng thái, không phải lựa chọn tuỳ tiện.</p>
+  </div>
+
+  <div class="note warn">
+    <span class="tag">Bẫy hiện thực · dựng đường Tier 2 chỉ trên 18 pillar</span>
+    <p><code>YieldCurve</code> nội suy <strong>tuyến tính theo <code>R</code></strong> còn
+      <code>B<sub>a</sub>(τ)/τ</code> là hàm <strong>cong</strong>. Cộng phần bù lên đúng 18 pillar rồi để
+      <code>np.interp</code> lo phần còn lại thì giữa các pillar, <code>R<sub>T2</sub> − R<sub>G</sub></code>
+      không còn bằng <code>δ·B<sub>a</sub>(τ)/τ</code>:</p>
+    <div class="tw" style="margin:12px 0 0">
+      <table>
+        <thead><tr><th>Lưới dựng đường Tier 2</th><th class="n">Sai lệch lớn nhất</th><th class="n">Ảnh hưởng lên giá</th></tr></thead>
+        <tbody>
+          <tr><td>chỉ 18 pillar</td><td class="n bad">3,18 bp</td><td class="n bad">0,39 bp mệnh giá</td></tr>
+          <tr><td>hợp pillar + ~1500 điểm, nối xuống 1 ngày</td><td class="n good">0,00003 bp</td><td class="n good">—</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p style="margin-top:12px">Tệ nhất ở hai chỗ: dưới pillar đầu tiên (<code>τ = 0,1</code> năm lệch
+      −1,92 bp, do ngoại suy phẳng) và giữa các pillar thưa ở đầu dài (<code>τ = 25</code> năm lệch
+      +1,07 bp, do quãng 20Y→30Y).</p>
+  </div>
+</section>
+
+
+<!-- ===================== 03 ===================== -->
+<section>
+  <span class="snum">03</span>
+  <h2>Dựng cây</h2>
+  <p class="dek">Trái phiếu lãi cố định cần một nhân tố. Trái phiếu thả nổi cần hai, vì lãi coupon và lãi
+    chiết khấu là hai đường cong khác nhau.</p>
+
+  <p style="font-size:14.5px; color:var(--muted)">Khung tham chiếu: Hull &amp; White,
+    <em>Multi-Curve Modeling Using Trees</em> (2015). Cách dựng dưới đây theo đúng bài báo, trừ bước lưới —
+    bài báo giả định <code>Δt</code> đều, còn lưới ở đây neo vào mốc hợp đồng nên không đều.</p>
+
+  <h3>Lưới thời gian — chung cho cả hai</h3>
+  <p>Lưới tính bằng <strong>số ngày nguyên</strong> kể từ ngày định giá và neo vào chính các mốc của hợp
+    đồng: ngày trả lãi, ngày đặt lại, ngày thực hiện quyền đều là node và không bao giờ bị dịch. Node đệm
+    sinh ra bằng cách chia đều từng khoảng trống về gần <code>step_days</code>, không phải áp một thước kẻ
+    lịch — thước kẻ không bao giờ trùng lịch coupon nên hợp của hai cái để lại mẩu vụn ở mọi mốc.</p>
+  <p><strong>Lưới không phụ thuộc lãi suất.</strong> Mọi kịch bản Basel và mọi phép bump đều định giá lại
+    trên đúng một lưới, nên ΔEVE sạch nhiễu rời rạc hoá.</p>
+
+  <div class="note key">
+    <span class="tag">Giả định · ngày fixing = ngày đặt lại lãi suất</span>
+    <p>Không mô hình hoá độ trễ fixing. Vì lịch đặt lại là tập con của lịch trả lãi, ngày fixing trùng một
+      mốc neo sẵn có và không sinh node nào — trên trái phiếu đặt lại 12 tháng trả lãi 6 tháng, số mốc neo
+      giảm từ 15 xuống 11 và khoảng ngắn nhất tăng từ 7 ngày lên 182 ngày. Nhưng trước hết đây là một
+      <strong>giả định mô hình</strong>: bỏ độ trễ đổi giá <strong>−9,14 bp mệnh giá</strong> trên trái
+      phiếu thử có sàn lãi suất. Nếu bản cáo bạch quy định độ trễ thật thì phải khai báo lại.</p>
+  </div>
+
+  <h3>Một nhân tố</h3>
+
+  <h4>Hai moment có điều kiện</h4>
+  <p>Đây là <em>hai đại lượng duy nhất</em> cây cần khớp trên mỗi bước. Cả hai chính xác với mọi
+    <code>Δt</code>, nên hình học cây không có sai số bậc <code>Δt</code>:</p>
+  <div class="eq">
+    <div class="al">
+      <span class="l"><span class="v">M</span></span>
+      <span>=</span>
+      <span class="r"><span class="f">E</span><span class="br">[</span> <span class="v">x</span>(<span class="v">t</span>+Δ<span class="v">t</span>) <span class="br">|</span> <span class="v">x</span>(<span class="v">t</span>) <span class="br">]</span>
+        &nbsp;=&nbsp; <span class="v">x</span>(<span class="v">t</span>) · <span class="v">e</span><sup>−aΔt</sup></span>
+
+      <span class="l"><span class="v">V</span></span>
+      <span>=</span>
+      <span class="r"><span class="f">Var</span><span class="br">[</span> · <span class="br">]</span>
+        &nbsp;=&nbsp; <span class="v">σ</span><sup>2</sup>∫<sub>0</sub><sup>Δt</sup><span class="v">e</span><sup>−2au</sup><span class="v">du</span>
+        &nbsp;=&nbsp; <span class="frac"><span class="n"><span class="v">σ</span><sup>2</sup><span class="br">(</span>1 − <span class="v">e</span><sup>−2aΔt</sup><span class="br">)</span></span><span class="d">2<span class="v">a</span></span></span></span>
+    </div>
+    <span class="num">(10)</span>
+  </div>
+
+  <h4>Khớp hai moment trên ba nhánh</h4>
+  <p>Ba nhánh đi tới các mức <code>k+1, k, k−1</code>, khoảng cách mức <code>dx′</code>. Chọn
+    <code>k</code> là số nguyên gần <code>M/dx′</code> nhất; phần lệch còn lại là
+    <span class="mi"><span class="v">η</span> = <span class="v">M</span> − <span class="v">k</span>·<span class="v">dx</span>′</span>,
+    với <span class="mi"><span class="br">|</span><span class="v">η</span><span class="br">|</span> ≤ <span class="v">dx</span>′/2</span>
+    do làm tròn gần nhất. Ba điều kiện, ba ẩn:</p>
+  <div class="eq">
+    <div class="al">
+      <span class="l"><span class="v">p<sub>u</sub></span> + <span class="v">p<sub>m</sub></span> + <span class="v">p<sub>d</sub></span></span>
+      <span>=</span><span class="r">1 <span class="cm">tổng xác suất</span></span>
+
+      <span class="l"><span class="br">(</span><span class="v">p<sub>u</sub></span> − <span class="v">p<sub>d</sub></span><span class="br">)</span>·<span class="v">dx</span>′</span>
+      <span>=</span><span class="r"><span class="v">η</span> <span class="cm">moment 1</span></span>
+
+      <span class="l"><span class="br">(</span><span class="v">p<sub>u</sub></span> + <span class="v">p<sub>d</sub></span><span class="br">)</span>·<span class="v">dx</span>′<sup>2</sup></span>
+      <span>=</span><span class="r"><span class="v">V</span> + <span class="v">η</span><sup>2</sup> <span class="cm">moment 2, quanh k·dx′</span></span>
+    </div>
+    <span class="num">(11)</span>
+  </div>
+
+  <h4>Chọn <span class="mi"><span class="v">dx</span>′ = <span class="sq">√</span><span class="br">(</span>3<span class="v">V</span><span class="br">)</span></span>, dựng lại từng bước</h4>
+  <p><code>dx′</code> vẫn còn tự do. Đặt <code>dx′² = 3V</code>, tức <code>V/dx′² = 1/3</code>, thì tại node
+    giữa (<code>η = 0</code>) xác suất về đúng dạng chuẩn <code>(1/6, 2/3, 1/6)</code> của Hull:</p>
+  <div class="eq">
+    <div class="al">
+      <span class="l"><span class="v">p<sub>u</sub></span></span><span>=</span>
+      <span class="r"><span class="frac"><span class="n">1</span><span class="d">6</span></span>
+        + <span class="frac"><span class="n"><span class="v">η</span><sup>2</sup></span><span class="d">6<span class="v">V</span></span></span>
+        + <span class="frac"><span class="n"><span class="v">η</span></span><span class="d">2<span class="sq">√</span>3 <span class="sq">√</span><span class="v">V</span></span></span></span>
+
+      <span class="l"><span class="v">p<sub>m</sub></span></span><span>=</span>
+      <span class="r"><span class="frac"><span class="n">2</span><span class="d">3</span></span>
+        − <span class="frac"><span class="n"><span class="v">η</span><sup>2</sup></span><span class="d">3<span class="v">V</span></span></span></span>
+
+      <span class="l"><span class="v">p<sub>d</sub></span></span><span>=</span>
+      <span class="r"><span class="frac"><span class="n">1</span><span class="d">6</span></span>
+        + <span class="frac"><span class="n"><span class="v">η</span><sup>2</sup></span><span class="d">6<span class="v">V</span></span></span>
+        − <span class="frac"><span class="n"><span class="v">η</span></span><span class="d">2<span class="sq">√</span>3 <span class="sq">√</span><span class="v">V</span></span></span></span>
+    </div>
+    <span class="num">(12)</span>
+  </div>
+
+  <div class="note key">
+    <span class="tag">Vì sao phải dựng lại <code>dx</code> ở từng bước</span>
+    <p>Hull &amp; White dùng <strong>một <code>Δx = σ√(3Δt)</code> duy nhất</strong> cho cả cây. Được, vì
+      bài báo giả định <code>Δt</code> đều — mọi mốc thanh toán là bội của <code>Δt</code>. Lưới ở đây
+      <strong>không đều</strong>: nó neo vào ngày trả lãi, ngày đặt lại và ngày thực hiện quyền, nên bước
+      dài ngắn khác nhau.</p>
+    <p>Đo trên một trái phiếu thật (coupon 6 tháng, hai ngày call lệch lịch, mục tiêu 21 ngày): lưới ra
+      <strong>90 bước chạy từ 19 đến 23 ngày</strong>. Nếu ép một <code>dx</code> toàn cục:</p>
+    <div class="tw" style="margin:12px 0">
+      <table>
+        <thead><tr><th></th><th class="n">Một <code>dx</code> toàn cục</th><th class="n"><code>dx<sub>i</sub> = √(3V<sub>i</sub>)</code></th></tr></thead>
+        <tbody>
+          <tr><td><code>V<sub>i</sub>/dx²</code> &nbsp;(cần = 1/3)</td><td class="n bad">0,3134 – 0,3786</td><td class="n good">1/3 chính xác</td></tr>
+          <tr><td><code>p<sub>m</sub></code> tại nút giữa &nbsp;(chuẩn 0,6667)</td><td class="n bad">0,6214 – 0,6866</td><td class="n good">0,6667</td></tr>
+          <tr><td><code>p<sub>u</sub> = p<sub>d</sub></code> &nbsp;(chuẩn 0,1667)</td><td class="n bad">0,1567 – 0,1893</td><td class="n good">0,1667</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>Xác suất trôi khỏi dạng chuẩn ở từng bước, và trôi <em>khác nhau</em> tuỳ bước dài hay ngắn — với
+      <code>min_step = 3</code> và lịch thực hiện quyền kiểu American thì dải bước còn rộng hơn nhiều.
+      Dựng lại <code>dx<sub>i</sub></code> theo phương sai OU <strong>chính xác</strong> của chính bước đó
+      giữ <code>V/dx² = 1/3</code> ở mọi bước, nên xác suất không bao giờ suy biến chỉ vì hai bước cạnh
+      nhau dài ngắn khác nhau.</p>
+    <p>Cái giá: ý nghĩa của chỉ số mức đổi dọc theo cây — giữa hai bước nó co giãn theo
+      <code>√(Δt<sub>i</sub>/Δt<sub>i+1</sub>)</code> — nên mỗi mốc thời gian phải giữ
+      <code>j_min</code>/<code>j_max</code> riêng và mảng giá trị đổi bề rộng khi lùi.</p>
+  </div>
+
+  <h4>Chứng minh xác suất không âm</h4>
+  <p>Đặt <span class="mi"><span class="v">s</span> = <span class="v">η</span>/<span class="sq">√</span><span class="v">V</span></span>,
+    viết lại (12) dưới dạng bình phương đầy đủ:</p>
+  <div class="eq">
+    <div class="al">
+      <span class="l"><span class="v">p<sub>u</sub></span></span><span>=</span>
+      <span class="r"><span class="frac"><span class="n">1</span><span class="d">6</span></span>
+        <span class="br">[</span> <span class="br">(</span><span class="v">s</span> + <span class="sq">√</span>3/2<span class="br">)</span><sup>2</sup> + <span class="frac sm"><span class="n">1</span><span class="d">4</span></span> <span class="br">]</span>
+        &nbsp;&gt; 0 <span class="cm">với mọi s</span></span>
+
+      <span class="l"><span class="v">p<sub>d</sub></span></span><span>=</span>
+      <span class="r"><span class="frac"><span class="n">1</span><span class="d">6</span></span>
+        <span class="br">[</span> <span class="br">(</span><span class="v">s</span> − <span class="sq">√</span>3/2<span class="br">)</span><sup>2</sup> + <span class="frac sm"><span class="n">1</span><span class="d">4</span></span> <span class="br">]</span>
+        &nbsp;&gt; 0 <span class="cm">với mọi s</span></span>
+
+      <span class="l"><span class="v">p<sub>m</sub></span></span><span>=</span>
+      <span class="r"><span class="frac"><span class="n">2 − <span class="v">s</span><sup>2</sup></span><span class="d">3</span></span>
+        &nbsp;≥ 0 &nbsp;⟺&nbsp; <span class="br">|</span><span class="v">s</span><span class="br">|</span> ≤ <span class="sq">√</span>2</span>
+    </div>
+    <span class="num">(13)</span>
+  </div>
+  <p><code>p<sub>u</sub></code> và <code>p<sub>d</sub></code> <strong>luôn dương</strong>, cận dưới đúng
+    <code>1/24 ≈ 0,041667</code> — kiểm số trên <code>s ∈ [−5, 5]</code> cho đúng giá trị đó. Chỉ
+    <code>p<sub>m</sub></code> mới có thể âm, và chỉ khi <code>|s| > √2</code>. Nhưng làm tròn gần nhất đã
+    bảo đảm <code>|s| ≤ √3/2 = 0,866</code>, tức <code>s² ≤ 0,75 &lt; 2</code>.</p>
+  <p><strong>Kết luận:</strong> khi <code>k</code> là số nguyên gần nhất, cả ba xác suất dương và có cận
+    dưới, không phụ thuộc độ dài bước. Xác suất âm <em>chỉ</em> xuất hiện khi <code>k</code> bị kẹp ở biên
+    cắt cụt — đo trên trái phiếu 10 năm, lưới 21 ngày: <strong>142 trên 5.798 node</strong> (2,45%), toàn
+    bộ ở biên, được ép về <code>(0, 1, 0)</code>.</p>
+  <p style="font-size:14px; color:var(--muted)">Hull &amp; White xử lý biên bằng cách <em>đổi kiểu phân
+    nhánh</em> (chúc xuống ở biên trên, chúc lên ở biên dưới) nên vẫn khớp hai moment. Cách ép
+    <code>(0,1,0)</code> thô hơn, nhưng ở đây không gian trạng thái đã cắt tại 6 độ lệch chuẩn — sâu bên
+    trong biên Hull — nên phần bị ép mang xác suất cỡ 1e−9.</p>
+
+  <h4>Cắt cụt không gian trạng thái</h4>
+  <p>Cắt tại một nửa bề rộng tính theo <code>x</code>, không phải theo số mức mỗi bước:</p>
+  <div class="eq">
+    <div class="al">
+      <span class="l"><span class="v">x</span><sub>max</sub></span><span>=</span>
+      <span class="r"><span class="f">min</span>
+        <span class="br">(</span> <span class="v">n</span><sub>σ</sub> · <span class="v">sd</span><sub>cuối kỳ</sub> ,&nbsp;
+        <span class="f">min</span><sub>i</sub> <span class="frac"><span class="n">0,184 · <span class="v">dx<sub>i</sub></span></span><span class="d"><span class="v">a</span> · Δ<span class="v">t<sub>i</sub></span></span></span> <span class="br">)</span></span>
+
+      <span class="l">số mức tại mốc <span class="v">i</span></span><span>=</span>
+      <span class="r"><span class="f">ceil</span><span class="br">(</span> <span class="v">x</span><sub>max</sub> / <span class="v">dx<sub>i</sub></span> <span class="br">)</span></span>
+    </div>
+    <span class="num">(14)</span>
+  </div>
+  <p>Hai cận khác bản chất. <code>n<sub>σ</sub></code> độ lệch chuẩn cuối kỳ là cận thống kê, thường ràng
+    buộc. <code>0,184/(a·Δt)</code> là biên Hull — cận <em>cấu trúc</em>, đúng khoảng cách mà một nhánh giữa
+    bị kẹp vẫn còn thoả <code>p<sub>m</sub> ≥ 0</code>; giữ làm giới hạn ngoài để ai đặt
+    <code>n<sub>σ</sub></code> rất lớn thì cây thoái hoá về cây cổ điển chứ không nổ bộ nhớ. Phải cắt theo
+    <code>x</code> vì hai cận co giãn khác nhau — <code>1/√Δt</code> và <code>1/Δt</code>; nếu cận này ràng
+    buộc ở bước ngắn và cận kia ở bước dài thì số mức nhảy giữa hai mốc liền nhau và cả một dải node bị xén
+    cùng lúc.</p>
+
+  <h3>Hai nhân tố</h3>
+  <p>Hai quá trình OU tương quan
+    (<span class="mi"><span class="v">dW<sub>x</sub></span>·<span class="v">dW<sub>y</sub></span> = <span class="v">ρ</span>·<span class="v">dt</span></span>),
+    mỗi cái có <code>(a, σ)</code> riêng: nhân tố 1 là đường chiết khấu của nhóm TCPH, nhân tố 2 là đường
+    chỉ số coupon <code>SOB4</code>. Rời rạc hoá <strong>từng biên duyên độc lập</strong> bằng đúng cây ở
+    trên, dùng chung lưới ngày. Việc còn lại: tìm phân phối đồng thời 3×3 giữ nguyên hai biên duyên và cho
+    tương quan bằng <code>ρ</code>.</p>
+
+  <h4>Nhích tích ngoài bằng ma trận tổng-không</h4>
+  <div class="eq">
+    <div class="al">
+      <span class="l"><span class="v">p</span>(<span class="v">a</span>,<span class="v">b</span>)</span><span>=</span>
+      <span class="r"><span class="v">p<sub>x</sub></span>(<span class="v">a</span>)·<span class="v">p<sub>y</sub></span>(<span class="v">b</span>)
+        &nbsp;+&nbsp; <span class="v">ε</span> · <span class="v">M</span>(<span class="v">a</span>,<span class="v">b</span>)</span>
+    </div>
+    <span class="num">(15)</span>
+  </div>
+  <pre class="blk">            ⎡  5  −4  −1 ⎤                      ⎡  1   4  −5 ⎤
+M  =  ρ≥0 : ⎢ −4   8  −4 ⎥            ρ&lt;0 :      ⎢  4  −8   4 ⎥
+            ⎣ −1  −4   5 ⎦                      ⎣ −5   4   1 ⎦</pre>
+  <p style="font-size:14px; color:var(--muted)">Hai ma trận này <strong>trùng khớp chính xác</strong> với
+    Bảng 3 của Hull &amp; White (2015), bảng điều chỉnh 9 xác suất theo bội của <code>ρ/36</code>.</p>
+
+  <p><strong>Biên duyên bất biến</strong> — chứng minh một dòng, vì mọi hàng và cột của <code>M</code> có
+    tổng bằng 0:</p>
+  <div class="eq">
+    <div class="al">
+      <span class="l">Σ<sub>b</sub> <span class="v">p</span>(<span class="v">a</span>,<span class="v">b</span>)</span><span>=</span>
+      <span class="r"><span class="v">p<sub>x</sub></span>(<span class="v">a</span>)·Σ<sub>b</sub><span class="v">p<sub>y</sub></span>(<span class="v">b</span>)
+        + <span class="v">ε</span>·Σ<sub>b</sub><span class="v">M</span>(<span class="v">a</span>,<span class="v">b</span>)
+        &nbsp;=&nbsp; <span class="v">p<sub>x</sub></span>(<span class="v">a</span>)·1 + <span class="v">ε</span>·0
+        &nbsp;=&nbsp; <span class="v">p<sub>x</sub></span>(<span class="v">a</span>)</span>
+    </div>
+    <span class="num">(16)</span>
+  </div>
+  <p>Đây không phải chi tiết kỹ thuật: chính tính chất này cho phép quy nạp <code>φ</code> ở mục 04 chạy
+    trên riêng nhân tố chiết khấu, vì cây hai nhân tố tái tạo chính xác biên duyên của nhân tố đó.</p>
+
+  <h4>Suy ra <span class="mi"><span class="v">ε</span> = <span class="v">ρ</span>/36</span></h4>
+  <p>Gọi <span class="mi"><span class="v">u</span> = (+1, 0, −1)</span> là dịch chuyển nhánh. Tích ngoài
+    không đóng góp hiệp phương sai nên toàn bộ đến từ phần nhích:</p>
+  <div class="eq">
+    <div class="al">
+      <span class="l"><span class="f">Cov</span></span><span>=</span>
+      <span class="r"><span class="v">ε</span> · Σ<sub>a</sub>Σ<sub>b</sub> <span class="v">M</span>(<span class="v">a</span>,<span class="v">b</span>)·<span class="v">u<sub>a</sub></span>·<span class="v">u<sub>b</sub></span>
+        &nbsp;=&nbsp; <span class="v">ε</span>·<span class="br">[</span>5 + 1 + 1 + 5<span class="br">]</span>
+        &nbsp;=&nbsp; 12<span class="v">ε</span>
+        <span class="cm">các số hạng có u = 0 triệt tiêu</span></span>
+
+      <span class="l"><span class="f">Var</span></span><span>=</span>
+      <span class="r">Σ<sub>a</sub><span class="v">p<sub>a</sub></span><span class="v">u<sub>a</sub></span><sup>2</sup> − 0
+        &nbsp;=&nbsp; <span class="frac"><span class="n">1</span><span class="d">6</span></span> + <span class="frac"><span class="n">1</span><span class="d">6</span></span>
+        &nbsp;=&nbsp; <span class="frac"><span class="n">1</span><span class="d">3</span></span>
+        <span class="cm">ở dạng chuẩn</span></span>
+
+      <span class="l"><span class="f">corr</span></span><span>=</span>
+      <span class="r"><span class="frac"><span class="n">12<span class="v">ε</span></span><span class="d">1/3</span></span>
+        = 36<span class="v">ε</span> &nbsp;≡&nbsp; <span class="v">ρ</span>
+        &nbsp;&nbsp;⟹&nbsp;&nbsp;
+        <span class="v">ε</span> = <span class="frac"><span class="n"><span class="v">ρ</span></span><span class="d">36</span></span></span>
+    </div>
+    <span class="num">(17)</span>
+  </div>
+  <p><code>ρ/36</code> không phải hằng số kinh nghiệm — nó là <strong>nghiệm đúng</strong> của phương trình
+    tương quan khi hai biên duyên ở dạng chuẩn. Kiểm số tại node trung tâm với
+    <code>ρ = −0,9 / −0,0591 / +0,4 / +0,9</code>: tương quan thực tế khớp mục tiêu tới
+    <strong>10 chữ số</strong>. Ở node lệch tâm (<code>η ≠ 0</code>) biên duyên rời dạng chuẩn nên tương
+    quan chỉ còn xấp xỉ — đó là lý do <code>diagnostics()</code> báo cả <code>realized_correlation</code>
+    lẫn <code>target_correlation</code>.</p>
+  <p>Với <code>|ρ|</code> lớn hoặc node lệch tâm mạnh, phép nhích có thể đẩy một ô xuống âm; khi đó thu nhỏ
+    nó bằng <code>λ ≤ 1</code> <strong>tại đúng node ấy</strong>, rồi kẹp về <code>≥ 0</code> và chuẩn hoá
+    lại — đúng cách Hull &amp; White mô tả là "hạ tương quan tại node đó xuống mức lớn nhất còn cho xác
+    suất không âm". Đánh đổi bắt buộc: không phân phối 3×3 nào giữ được cả hai biên duyên lẫn một
+    <code>ρ</code> tuỳ ý.</p>
+
+  <h3>Chiết khấu đi theo nhân tố 1; nhân tố 2 chỉ sinh coupon</h3>
+  <div class="eq">
+    <div class="al">
+      <span class="l"><span class="v">V</span>(<span class="v">x</span>,<span class="v">y</span>)</span><span>=</span>
+      <span class="r"><span class="br">[</span> Σ<sub>a</sub>Σ<sub>b</sub> <span class="v">p</span>(<span class="v">a</span>,<span class="v">b</span>) · <span class="v">V</span><span class="br">(</span><span class="v">c<sub>x</sub></span>(<span class="v">a</span>), <span class="v">c<sub>y</sub></span>(<span class="v">b</span>)<span class="br">)</span> <span class="br">]</span>
+        · <span class="v">D<sub>x</sub></span>
+        <span class="cm">D chỉ phụ thuộc chỉ số của nhân tố 1</span></span>
+
+      <span class="l"><span class="v">L</span></span><span>=</span>
+      <span class="r"><span class="frac"><span class="n">1/<span class="v">P</span><sub>ref</sub> − 1</span><span class="d"><span class="v">δ</span><sub>ref</sub></span></span>
+        <span class="cm">P<sub>ref</sub> = A<sub>ref</sub>·exp(−B<sub>ref</sub>·y)</span></span>
+
+      <span class="l">lãi</span><span>=</span>
+      <span class="r"><span class="f">min</span><span class="br">(</span><span class="f">max</span><span class="br">(</span><span class="v">L</span> + margin, floor<span class="br">)</span>, cap<span class="br">)</span>
+        <span class="cm">áp MỘT LẦN mỗi kỳ fixing</span></span>
+    </div>
+    <span class="num">(18)</span>
+  </div>
+  <p>Đây là chỗ duy nhất còn dùng dạng affine <code>A·exp(−B·y)</code>: nó là ZCB <em>nhìn tới trước</em> qua
+    nhiều bước, không phải chiết khấu một bước, nên không thay được bằng quy nạp. Hull &amp; White phải quy
+    nạp lùi một cây con ở chỗ này vì bài báo dùng dạng lognormal <code>x = ln r</code>, vốn không có công
+    thức đóng cho giá ZCB.</p>
+
+  <div class="note warn">
+    <span class="tag">Chưa cài · bước cuối của Hull &amp; White buộc mọi FRA bằng 0</span>
+    <p>Bài báo có một bước cuối: dịch node của nhân tố 2 các lượng <code>β<sub>0</sub>, β<sub>Δt</sub>, …</code>
+      sao cho mọi FRA nhận cố định tại đúng forward hôm nay đều có giá 0. Ở đây chân tham chiếu đọc thẳng
+      đường ZYC của chỉ số rồi chiếu qua công thức affine — <strong>không có phép hiệu chỉnh nào buộc FRA
+      về 0</strong>.</p>
+    <p>Đo trên FRA 1 năm vào 1 năm, margin 0, so với trái phiếu lãi cố định tại đúng forward của đường chỉ số:</p>
+    <div class="tw" style="margin:12px 0">
+      <table>
+        <thead><tr><th class="n">ρ</th><th class="n">−0,9</th><th class="n">−0,5</th><th class="n">0,0</th><th class="n">+0,5</th><th class="n">+0,9</th></tr></thead>
+        <tbody>
+          <tr><td>Lệch so với FRA = 0</td><td class="n bad">+6,26</td><td class="n bad">+5,33</td><td class="n bad">+3,92</td><td class="n bad">+2,51</td><td class="n bad">+1,57</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>Lệch tỷ lệ <strong>chính xác với <code>σ<sub>ref</sub>²</code></strong> — hệ số 0,0036 không đổi khi
+      <code>σ</code> chạy từ 0,001 tới 0,066 — nên đúng là số hạng lồi của phép chiếu affine, không phải
+      nhiễu rời rạc hoá. Ở mức <code>σ<sub>ref</sub> = 0,033</code> đã hiệu chỉnh của SOB4, mô hình cho lãi
+      chỉ số kỳ vọng cao hơn forward khoảng <strong>4 bp mệnh giá</strong>.</p>
+    <p><strong>Cần quyết định.</strong> Chỉ 5 trên 25 mã tăng vốn là thả nổi nên phạm vi hẹp, nhưng với 5 mã
+      đó thì 4 bp là đáng kể. Ba lựa chọn: cài bước hiệu chỉnh <code>β</code>; chấp nhận và ghi vào hạn chế
+      mô hình; hoặc hiệu chỉnh <code>margin</code> bù lại. Chưa làm gì trong ba việc này.</p>
+  </div>
+
+  <div class="note warn">
+    <span class="tag">Trần/sàn áp theo kỳ fixing, không theo kỳ trả lãi</span>
+    <p>Một kỳ đặt lại 12 tháng trả lãi 6 tháng một lần thì <strong>quan sát sàn đúng một lần</strong>, cả hai
+      kỳ trả lãi thừa hưởng kết quả. Áp theo từng kỳ trả lãi sẽ định giá một hợp đồng sàn thành hai quyền chọn.</p>
+    <p>Khi một lần fixing chi phối nhiều kỳ trả lãi, mảng giá trị mọc thêm một trục nhãn — mỗi bản sao ứng
+      với một mức lãi đã cố định. Trục này <strong>không phân nhánh và không mang xác suất</strong>; các bản
+      sao chỉ khác ở dòng tiền bơm vào và quyết định thực hiện quyền kéo theo. Tới ngày fixing, nhãn trở
+      thành sự thật và trục sập xuống theo đường chéo.</p>
+  </div>
+
+  <div class="tw">
+    <table>
+      <thead><tr><th></th><th>Một nhân tố</th><th>Hai nhân tố</th></tr></thead>
+      <tbody>
+        <tr><td>Loại trái phiếu</td><td>Lãi cố định, <strong>kể cả bậc thang</strong></td><td>Thả nổi, toàn phần hoặc một phần</td></tr>
+        <tr><td>Quyền đính kèm</td><td>Mua / bán</td><td>Mua / bán <strong>+ trần/sàn lãi coupon</strong></td></tr>
+        <tr><td>Tham số thêm</td><td>—</td><td><code>ρ</code></td></tr>
+        <tr><td>TP tăng vốn hiện có</td><td class="n">20 mã</td><td class="n">5 mã (SOB4)</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>Không cấu trúc nào cần xử lý đặc biệt: mỗi kỳ tính lãi là một bản ghi độc lập, nên bậc thang chỉ là
+    <code>fixed_rate</code> khác nhau theo kỳ, còn trái phiếu cố định hai năm đầu rồi thả nổi là
+    <code>fixed_rate</code> ở các kỳ đầu và <code>fixing_day</code> ở các kỳ sau.</p>
+</section>
+
+
+<!-- ===================== 04 ===================== -->
+<section>
+  <span class="snum">04</span>
+  <h2>Khớp cây vào đường cong</h2>
+  <p class="dek">Giải <code>φ(t)</code> cho từng bước bằng quy nạp tiến Arrow–Debreu, sao cho cây tái tạo
+    chính xác giá zero đọc từ đường ZYC.</p>
+
+  <h3>Lãi suất của một bước, không phải lãi suất tức thời</h3>
+  <p>Áp (7) với <code>τ = Δt</code> — đây là đại lượng mà một bước của cây thực sự chiết khấu bằng:</p>
+  <div class="eq">
+    <div class="al">
+      <span class="l"><span class="v">R</span>(<span class="v">t</span>, <span class="v">t</span>+Δ<span class="v">t</span>)</span><span>=</span>
+      <span class="r"><span class="frac"><span class="n"><span class="v">B<sub>a</sub></span>(Δ<span class="v">t</span>)</span><span class="d">Δ<span class="v">t</span></span></span>
+        · <span class="v">x</span>(<span class="v">t</span>) &nbsp;+&nbsp; <span class="v">φ</span>(<span class="v">t</span>)
+        <span class="cm">φ(t) = −ln A / Δt</span></span>
+
+      <span class="l">1 − <span class="frac sm"><span class="n"><span class="v">B<sub>a</sub></span>(Δ<span class="v">t</span>)</span><span class="d">Δ<span class="v">t</span></span></span></span><span>≈</span>
+      <span class="r"><span class="frac"><span class="n"><span class="v">a</span>·Δ<span class="v">t</span></span><span class="d">2</span></span>
+        <span class="cm">bậc nhất theo Δt</span></span>
+    </div>
+    <span class="num">(19)</span>
+  </div>
+  <p>Hệ số của <code>x</code> là <code>B<sub>a</sub>(Δt)/Δt</code>, <strong>không phải 1</strong>. Dạng quen
+    thuộc <code>r = x + φ</code> chỉ đúng khi <code>Δt → 0</code>. Với <code>a = 0,1827</code>:
+    <code>B/Δt = 0,99476</code> ở bước 21 ngày, <code>0,97756</code> ở bước quý.</p>
+
+  <p>Đo trực tiếp cái giá của dạng ngây thơ: cùng cây, cùng dữ liệu, chỉ đổi dạng lãi suất node — và
+    <strong>khớp Arrow–Debreu cả hai</strong> nên cả hai đều tái tạo đường ZYC chính xác:</p>
+  <div class="tw">
+    <table>
+      <thead><tr><th>Bước</th><th class="n">B(Δt)/Δt</th><th class="n">Giá TP, dạng đúng</th><th class="n">Giá TP, dạng ngây thơ</th><th class="n">Lệch giá trị quyền mua</th></tr></thead>
+      <tbody>
+        <tr><td class="m">21 ngày</td><td class="n">0,994762</td><td class="n">99,944049</td><td class="n">99,933028</td><td class="n bad">+1,10 bp</td></tr>
+        <tr><td class="m">42 ngày</td><td class="n">0,989807</td><td class="n">99,957155</td><td class="n">99,935886</td><td class="n bad">+2,13 bp</td></tr>
+        <tr><td class="m">56 ngày</td><td class="n">0,987096</td><td class="n">99,981946</td><td class="n">99,955024</td><td class="n bad">+2,69 bp</td></tr>
+        <tr><td class="m">91 ngày</td><td class="n">0,977563</td><td class="n">100,018248</td><td class="n">99,972326</td><td class="n bad">+4,59 bp</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="note warn">
+    <span class="tag">Điểm nguy hiểm nhất</span>
+    <p>Khớp Arrow–Debreu <strong>không cứu được</strong> sai số này. Cả hai dạng đều tái tạo đường ZYC chính
+      xác nên <code>curve_repricing_error</code> bằng 0 ở cả hai và <em>không cảnh báo gì</em>. Sai lệch nằm
+      ở độ nhạy của chiết khấu theo <code>x</code> — kênh truyền biến động — và chỉ lộ ra trong phần
+      optionality. Đây chính là lý do phải dùng dạng <code>B<sub>a</sub>(Δt)/Δt</code> khi <code>Δt</code>
+      không nhỏ.</p>
+  </div>
+
+  <h3>Giá Arrow–Debreu và nghiệm đóng cho <span class="mi"><span class="v">φ<sub>i</sub></span></span></h3>
+  <p><code>Q<sub>i</sub>(j)</code> là <strong>giá hôm nay</strong> của chứng khoán trả 1 đồng tại
+    <code>t<sub>i</sub></code> nếu cây ở node <code>j</code>, và 0 ở node khác; <code>Q<sub>0</sub> = 1</code>.
+    Vì danh mục trả 1 đồng ở <em>mọi</em> trạng thái chính là một zero bond, luôn có
+    <code>Σ<sub>j</sub> Q<sub>i</sub>(j) = P(0, t<sub>i</sub>)</code>.</p>
+  <p><code>φ<sub>i</sub></code> giống nhau ở mọi node của bước đó nên tách được thành thừa số chung —
+    <strong>giải thẳng, không cần dò</strong>:</p>
+  <div class="eq">
+    <div class="al">
+      <span class="l">Σ<sub>j</sub> <span class="v">Q<sub>i</sub></span>(<span class="v">j</span>) · <span class="f">exp</span><span class="br">(</span>−<span class="v">R<sub>i</sub></span>(<span class="v">j</span>)·Δ<span class="v">t<sub>i</sub></span><span class="br">)</span></span>
+      <span>=</span><span class="r"><span class="v">P</span>(0, <span class="v">t</span><sub>i+1</sub>) <span class="cm">điều kiện cần khớp</span></span>
+
+      <span class="l"><span class="v">φ<sub>i</sub></span></span><span>=</span>
+      <span class="r"><span class="frac"><span class="n">1</span><span class="d">Δ<span class="v">t<sub>i</sub></span></span></span>
+        · <span class="f">ln</span>
+        <span class="frac"><span class="n">Σ<sub>j</sub> <span class="v">Q<sub>i</sub></span>(<span class="v">j</span>) · <span class="f">exp</span><span class="br">(</span>−<span class="v">B<sub>a</sub></span>(Δ<span class="v">t<sub>i</sub></span>)·<span class="v">x<sub>j</sub></span><span class="br">)</span></span><span class="d"><span class="v">P</span>(0, <span class="v">t</span><sub>i+1</sub>)</span></span></span>
+
+      <span class="l"><span class="v">D<sub>i</sub></span>(<span class="v">j</span>)</span><span>=</span>
+      <span class="r"><span class="f">exp</span><span class="br">(</span>−<span class="v">φ<sub>i</sub></span>·Δ<span class="v">t<sub>i</sub></span><span class="br">)</span>
+        · <span class="f">exp</span><span class="br">(</span>−<span class="v">B<sub>a</sub></span>(Δ<span class="v">t<sub>i</sub></span>)·<span class="v">x<sub>j</sub></span><span class="br">)</span></span>
+
+      <span class="l"><span class="v">Q</span><sub>i+1</sub>(<span class="v">j</span>′)</span><span>=</span>
+      <span class="r">Σ<sub>j</sub> <span class="v">Q<sub>i</sub></span>(<span class="v">j</span>) · <span class="v">D<sub>i</sub></span>(<span class="v">j</span>) · <span class="v">p<sub>i</sub></span><span class="br">(</span><span class="v">j</span> → <span class="v">j</span>′<span class="br">)</span>
+        <span class="cm">quy nạp tiến</span></span>
+    </div>
+    <span class="num">(20)</span>
+  </div>
+  <p>Toàn bộ vế phải chỉ gồm: giá Arrow–Debreu của chính cây, hệ số <code>B<sub>a</sub></code>, và giá zero
+    <code>P(0,t<sub>i+1</sub>)</code> đọc từ đường ZYC. <strong>Không có <code>A(t,T)</code>, không có số
+    hạng lồi.</strong> <code>φ(t)</code> là ẩn số được giải ra, hiện thành một mảng số đọc được
+    (<code>tree.phi</code>).</p>
+
+  <h4>Vì sao không bỏ được bước quy nạp</h4>
+  <p>Hull-White có công thức giải tích đóng cho <code>φ</code> trong mô hình <em>liên tục</em> — chính là (8).
+    Nếu lấy thẳng nó thay vì giải (20), cây không còn khớp đường cong, vì cây thay phân phối Gauss bằng ba
+    nhánh và cắt cụt không gian trạng thái:</p>
+  <div class="tw">
+    <table>
+      <thead><tr><th>Đáo hạn</th><th class="n">P zero, cây thô</th><th class="n">P zero, ZYC</th><th class="n">Lệch</th></tr></thead>
+      <tbody>
+        <tr><td class="m">2Y</td><td class="n">0,87690727</td><td class="n">0,87692067</td><td class="n">−0,13 bp</td></tr>
+        <tr><td class="m">5Y</td><td class="n">0,70003657</td><td class="n">0,70009434</td><td class="n">−0,58 bp</td></tr>
+        <tr><td class="m">10Y</td><td class="n">0,46650513</td><td class="n">0,46662708</td><td class="n bad">−1,22 bp</td></tr>
+        <tr><td class="m">20Y</td><td class="n">0,20465066</td><td class="n">0,20479815</td><td class="n bad">−1,48 bp</td></tr>
+        <tr><td class="m">30Y</td><td class="n">0,09097453</td><td class="n">0,09108545</td><td class="n">−1,11 bp</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>Nhỏ, nhưng <em>có hệ thống</em> và <strong>không triệt tiêu giữa kịch bản gốc và kịch bản sốc</strong> —
+    nên với ΔEVE thì bắt buộc phải khớp. Sau khi khớp, <code>curve_repricing_error</code> về 0 ở mức chính
+    xác máy.</p>
+
+  <div class="note warn">
+    <span class="tag">Bẫy hiện thực · dịch x trong lattice thay vì sửa đường cong</span>
+    <p>Trong quy nạp (20), <code>exp(−φ<sub>i</sub>Δt<sub>i</sub>)</code> là một <strong>tỷ số</strong> có
+      <code>Σ<sub>j</sub> Q<sub>i</sub>(j)exp(−B·x<sub>j</sub>)</code> ở mẫu. Dịch <code>x</code> đi
+      <code>δ</code> thì tử và mẫu cùng nhân <code>exp(∓B·δ)</code> và triệt tiêu nhau: chiết khấu từng node
+      <em>không đổi một chút nào</em>. Spread biến mất sạch, mà <code>curve_repricing_error</code> vẫn báo 0
+      nên không có dấu hiệu gì. Lối vào duy nhất là <strong>đường cong đầu vào</strong>, vì nó đổi vế phải
+      <code>P(0,t<sub>i+1</sub>)</code>.</p>
+  </div>
+</section>
+
+
+<!-- ===================== 05 ===================== -->
+<section>
+  <span class="snum">05</span>
+  <h2>Hiệu chỉnh tham số từ thị trường</h2>
+  <p class="dek">Đường cong là đầu vào. Cây cần thêm ba tham số — hai thứ đã có trong pipeline hôm nay,
+    <code>δ</code> là thứ ba.</p>
+
+  <p>Đường LSCK của từng nhóm tổ chức phát hành <strong>đã là đường ZYC</strong> — lãi suất zero gộp liên
+    tục, ACT/365, 18 kỳ hạn chuẩn, một dòng mỗi ngày. Pipeline đọc thẳng
+    <code>datasets/curve/FI_ZYC_VND_&lt;nhóm&gt;.csv</code> và dựng cây trực tiếp trên đó; không có bước
+    bootstrap từ giá par nào trong phạm vi mô hình này.</p>
+
+  <div class="steps">
+
+    <div class="step"><div class="b">
+      <h3><span class="mi">(<span class="v">a</span>, <span class="v">σ</span>)</span> — Kalman filter, hai giai đoạn</h3>
+      <p>Mô hình không gian trạng thái trên chính lịch sử ngày của đường cong đó:</p>
+      <div class="eq">
+        <div class="al">
+          <span class="l"><span class="v">x</span><sub>i+1</sub></span><span>=</span>
+          <span class="r"><span class="v">e</span><sup>−aΔt<sub>i</sub></sup>·<span class="v">x<sub>i</sub></span> + <span class="v">c<sub>i</sub></span> + <span class="v">w<sub>i</sub></span>
+            <span class="cm">chuyển trạng thái, w ~ N(0, Q<sub>i</sub>)</span></span>
+
+          <span class="l"><span class="v">y<sub>i</sub></span>(<span class="v">τ</span>)</span><span>=</span>
+          <span class="r"><span class="v">d<sub>i</sub></span>(<span class="v">τ</span>) +
+            <span class="frac"><span class="n"><span class="v">B<sub>a</sub></span>(<span class="v">τ</span>)</span><span class="d"><span class="v">τ</span></span></span>
+            · <span class="v">x<sub>i</sub></span> + <span class="v">ε</span>
+            <span class="cm">quan trắc, ε ~ N(0, σ<sub>ε</sub>²)</span></span>
+
+          <span class="l"><span class="v">Q<sub>i</sub></span></span><span>=</span>
+          <span class="r"><span class="frac"><span class="n"><span class="v">σ</span><sup>2</sup><span class="br">(</span>1 − <span class="v">e</span><sup>−2aΔt<sub>i</sub></sup><span class="br">)</span></span><span class="d">2<span class="v">a</span></span></span>
+            &nbsp;&nbsp;&nbsp; <span class="v">d<sub>i</sub></span>(<span class="v">τ</span>) = <span class="v">f<sub>i</sub></span>(<span class="v">τ</span>) + ½·<span class="frac sm"><span class="n"><span class="v">B<sub>a</sub></span>(<span class="v">τ</span>)<sup>2</sup></span><span class="d"><span class="v">τ</span></span></span>·<span class="v">V</span>(<span class="v">t<sub>i</sub></span>)</span>
+        </div>
+        <span class="num">(21)</span>
+      </div>
+      <p>Quan trắc là 11 kỳ hạn <code>τ ∈ {1M … 10Y}</code>, loại <code>ON/1W/2W</code>.
+        <strong>Giai đoạn 1</strong> cực đại hoá log-likelihood theo <code>(a, σ, σ<sub>ε</sub>)</code>, khởi
+        tạo bằng lưới 6×4×5 trong không gian log rồi tinh chỉnh Nelder-Mead. <strong>Giai đoạn 2</strong> tối
+        ưu lại <code>(a, σ)</code> trên likelihood dự báo đa tầm
+        <code>h ∈ {21 … 2520}</code> ngày làm việc, giữ nguyên <code>σ<sub>ε</sub></code>.</p>
+      <div class="note key">
+        <span class="tag">Vì sao δ là đại lượng đúng để hiệu chỉnh</span>
+        <p>Ma trận quan trắc là <code>B<sub>a</sub>(τ)/τ</code> — <strong>đúng bằng hệ số truyền của
+          spread</strong> trong (9). Bộ lọc đã đọc đường cong qua chính lăng kính đó; <code>δ</code> chỉ là
+          một cú dịch trong cùng biến <code>x</code>. Spread vì vậy được biểu diễn đúng trong đơn vị mà toàn
+          bộ hệ hiệu chỉnh hiện có đang làm việc, không phải đại lượng ghép thêm từ ngoài.</p>
+      </div>
+    </div></div>
+
+    <div class="step"><div class="b">
+      <h3><span class="mi"><span class="v">ρ</span></span> — tương quan giữa hai nhân tố</h3>
+      <p>Chạy lại Kalman filter ở tham số đã hiệu chỉnh, làm trơn RTS, rồi khử trôi và khử suy giảm để phần
+        gia số trở thành nhiễu thuần:</p>
+      <div class="eq">
+        <div class="al">
+          <span class="l">x̃<sub>t</sub></span><span>=</span>
+          <span class="r"><span class="v">e</span><sup>a·t</sup> · <span class="br">(</span> x̂<sub>t</sub> − <span class="v">μ<sub>t</sub></span> <span class="br">)</span></span>
+
+          <span class="l"><span class="v">ρ</span></span><span>=</span>
+          <span class="r"><span class="f">corr</span><span class="br">(</span> Δx̃<sub>chiết khấu</sub> , Δx̃<sub>tham chiếu</sub> <span class="br">)</span>
+            <span class="cm">cửa sổ 250 ngày làm việc</span></span>
+        </div>
+        <span class="num">(22)</span>
+      </div>
+      <p>Giá trị hiện tại giữa <code>FI_ZYC_VND_LB_G1</code> và <code>sob4</code>: <strong>−0,0591</strong>.</p>
+    </div></div>
+
+    <div class="step"><div class="b">
+      <h3><span class="mi"><span class="v">δ</span></span> — dò ngược từ giá thị trường</h3>
+      <p>Với mỗi quan sát <code>(mã b, ngày d)</code>:</p>
+      <div class="eq">
+        <div class="al">
+          <span class="l"><span class="v">P</span><sub>obs</sub></span><span>=</span>
+          <span class="r"><span class="frac"><span class="n">|premium|</span><span class="d">|par_value|</span></span>
+            × face <span class="cm">giá dirty trên 100 mệnh giá</span></span>
+
+          <span class="l"><span class="v">f</span>(<span class="v">δ</span>)</span><span>=</span>
+          <span class="r"><span class="v">V<sub>b</sub></span><span class="br">[</span> curve<sub>T2</sub><span class="br">(</span><span class="v">z<sub>G</sub></span>, <span class="v">δ</span>, <span class="v">a<sub>G</sub></span><span class="br">)</span> ; <span class="v">a<sub>G</sub></span>, <span class="v">σ<sub>G</sub></span> <span class="br">]</span>(<span class="v">d</span>)
+            &nbsp;−&nbsp; <span class="v">P</span><sub>obs</sub> &nbsp;=&nbsp; 0</span>
+        </div>
+        <span class="num">(23)</span>
+      </div>
+      <p><code>f</code> giảm ngặt theo <code>δ</code> nên bracket cơ học rồi giải bằng <code>brentq</code>,
+        <code>xtol = 1e−7</code> (≈ 0,001 bp) — thấp hơn hai bậc so với sàn nhiễu ~0,5 bp mệnh giá của chính
+        engine. Không dùng Newton: Brent không cần đạo hàm, không thoát khỏi bracket, và hàm mục tiêu có gấp
+        khúc nhẹ ở chỗ biên thực hiện quyền cắt qua mức trạng thái.</p>
+      <p>Định giá bật <strong>đầy đủ</strong> call/put/cap/floor, ở <strong>kịch bản gốc</strong>, và
+        <strong>không</strong> đụng chân tham chiếu <code>SOB4</code> — spread là khái niệm chiết khấu của tổ
+        chức phát hành, không phải định giá lại chỉ số mà trái phiếu trả lãi theo.</p>
+    </div></div>
+
+  </div>
+</section>
+
+
+<!-- ===================== 06 ===================== -->
+<section>
+  <span class="snum">06</span>
+  <h2>Bảng spread</h2>
+  <p class="dek">25 mã tăng vốn là quá ít để tách theo tổ chức phát hành — gộp chung thành một pool.</p>
+
+  <p>Mỗi quan sát được gán rổ kỳ hạn <code>τ(b,d)</code> = số tháng còn lại từ ngày quan sát tới đáo hạn,
+    snap về pillar gần nhất trong 18 pillar chuẩn. Tập quan sát của mỗi ô <strong>không lọc theo
+    nhóm</strong>:</p>
+  <div class="eq">
+    <div class="al">
+      <span class="l">Ω(<span class="v">m</span>, <span class="v">τ</span>)</span><span>=</span>
+      <span class="r"><span class="br">{</span> (<span class="v">b</span>,<span class="v">d</span>) : <span class="v">b</span> tăng vốn, tháng(<span class="v">d</span>) = <span class="v">m</span>, rổ = <span class="v">τ</span>, ok <span class="br">}</span>
+        <span class="cm">HỢP của mọi nhóm G</span></span>
+
+      <span class="l"><span class="v">S</span><sub>raw</sub>(<span class="v">m</span>, <span class="v">τ</span>)</span><span>=</span>
+      <span class="r"><span class="frac"><span class="n">Σ<sub>Ω</sub> <span class="v">N<sub>b</sub></span> · <span class="v">δ</span>(<span class="v">b</span>,<span class="v">d</span>)</span><span class="d">Σ<sub>Ω</sub> <span class="v">N<sub>b</sub></span></span></span>
+        <span class="cm">N = par value</span></span>
+    </div>
+    <span class="num">(24)</span>
+  </div>
+  <p>Kết quả <code>S(m,τ)</code> là <strong>một bảng <code>δ</code> duy nhất</strong>, dùng chung cho LB_G1,
+    LB_G2 và LB_G3. Gộp chung là nhất quán về đại lượng chứ không phải xấp xỉ cho tiện: mỗi
+    <code>δ(b,d)</code> được đo so với đường nền của <em>chính nhóm của mã đó</em>, nên cái được bình quân
+    là phần bù <strong>do tính chất tăng vốn</strong>, đã sạch chênh lệch tín nhiệm giữa các nhóm.</p>
+
+  <div class="note warn">
+    <span class="tag">Hệ quả đã chấp nhận</span>
+    <p>Pool trong không gian <code>x</code> nghĩa là cùng <code>δ</code> nhưng <strong>spread zero khác nhau
+      theo nhóm</strong>, vì <code>B<sub>a</sub>(τ)/τ</code> phụ thuộc <code>a</code> — mà <code>a</code>
+      chênh rất xa: LB_G1 0,1827, LB_G3 <strong>1,0269</strong>. Cùng <code>δ = 1,43%</code>, spread zero ở
+      10Y là 0,657% với LB_G1 nhưng chỉ <strong>0,139%</strong> với LB_G3. Thực tế ảnh hưởng đúng một mã
+      (<code>HDBC8Y253302</code>), nhưng phải in bảng spread zero tương đương theo từng nhóm ở cuối mỗi lần
+      chạy để con số này không bị chôn trong <code>δ</code>.</p>
+  </div>
+
+  <h3>Nguyên tắc vá</h3>
+  <p>Rổ không có quan sát nào trong tháng được lấp theo đúng thứ tự sau:</p>
+  <div class="tw">
+    <table>
+      <thead><tr><th style="width:56px">Bước</th><th>Quy tắc</th><th>Nguồn tra</th></tr></thead>
+      <tbody>
+        <tr><td class="n">0</td><td>Có quan sát → dùng chính nó</td><td class="m">S<sub>raw</sub></td></tr>
+        <tr><td class="n">1</td><td>Rổ <strong>ngắn hơn gần nhất có số liệu</strong> trong cùng tháng</td><td class="m">S<sub>raw</sub></td></tr>
+        <tr><td class="n">2</td><td>Rổ gần nhất <strong>hai chiều</strong> trong cùng tháng; hoà thì lấy rổ ngắn hơn</td><td class="m">S<sub>raw</sub></td></tr>
+        <tr><td class="n">3</td><td>Cùng rổ, <strong>kỳ tính toán gần nhất trước đó</strong></td><td class="m">S đã vá</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="note warn">
+    <span class="tag">Ba chỗ dễ sai khi hiện thực</span>
+    <p><strong>Bước 1 và 2 tra <code>S<sub>raw</sub></code>, bước 3 tra bảng đã vá.</strong> Vá trong cùng
+      tháng không được móc nối vào ô vừa vá — nếu không, một quan sát duy nhất tại 3M sẽ lan tới 30Y qua 17
+      chặng và chữ "gần nhất" mất nghĩa. Ngược lại, chuyển tháng <em>phải</em> đọc giá trị đã vá, nếu không
+      một rổ chưa từng được quan sát sẽ mãi mãi rỗng.</p>
+    <p><strong>Index tháng phải liên tục và duyệt tăng dần.</strong> Tháng không có quan sát nào sẽ có
+      <code>S<sub>raw</sub></code> toàn rỗng → mọi rổ rơi xuống bước 3 → bê nguyên dòng tháng trước. Quy tắc
+      "giữ spread kỳ gần nhất" rơi ra miễn phí, không cần nhánh code riêng.</p>
+    <p><strong>Nối dài index tới tận tháng của ngày định giá.</strong> Nếu kỳ báo cáo là 03/2026 mà quan sát
+      mới nhất là 01/2026, index phải chạy tới <code>2026-03</code> để bước 3 bê giá trị sang.</p>
+  </div>
+</section>
+
+
+<!-- ===================== 07 ===================== -->
+<section>
+  <span class="snum">07</span>
+  <h2>Vận hành</h2>
+  <p class="dek">Quá khứ dựng bảng; hiện tại tra một số; cú sốc không chạm vào spread.</p>
+
+  <div class="tw">
+    <table>
+      <thead><tr><th style="width:150px">Giai đoạn</th><th>Làm gì</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><strong>A · Quá khứ</strong><br><span style="color:var(--muted); font-size:13px">một lần mỗi kỳ</span></td>
+          <td>Với mỗi quan sát: dựng đường nhóm và lịch dòng tiền <strong>tại ngày quan sát</strong>, dò
+            <code>δ</code> theo (23) trên lưới 21 ngày. Gán rổ, bình quân theo (24), vá, nối dài tới tháng
+            hiện tại.</td>
+        </tr>
+        <tr>
+          <td><strong>B · Hiện tại</strong><br><span style="color:var(--muted); font-size:13px">kịch bản gốc</span></td>
+          <td>Tra <code>δ* = S(tháng(V), rổ(b,V))</code> — một số. Dựng đường Tier 2 theo (9) trên lưới mịn,
+            định giá với <code>(a<sub>G</sub>, σ<sub>G</sub>)</code> của <strong>đường nhóm</strong>. Trái
+            phiếu thường đi đường cũ với <code>δ* = 0</code>.</td>
+        </tr>
+        <tr>
+          <td><strong>C · Cú sốc</strong><br><span style="color:var(--muted); font-size:13px">6 kịch bản Basel</span></td>
+          <td>Sốc <strong>đường nhóm</strong> để khớp ra <code>R<sup>k</sup>(t,T)</code>, rồi mới cộng
+            <code>δ*</code>. Cùng <code>δ*</code> như kịch bản gốc; <code>σ</code> nhân 1,25.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p><code>(a<sub>G</sub>, σ<sub>G</sub>)</code> lấy của đường nhóm, không hiệu chỉnh lại trên đường đã cộng
+    spread: <code>δ</code> là hằng số tất định nên không làm tăng độ biến động của <code>R(t,T)</code>. Vì
+    cùng lý do, <code>ρ</code> cũng vẫn tính trên tên đường nhóm.</p>
+
+  <h3>Vì sao cú sốc phải tính trên đường nhóm</h3>
+  <p><code>ShockScenario</code> suy độ lớn cú sốc từ <code>R̄</code> — trung bình <em>toàn chuỗi lịch sử</em>
+    của từng cột kỳ hạn — rồi kẹp bởi trần/sàn phi tuyến, ví dụ sốc song song
+    <code>±max(min(R̄ × 0,6 ; 4%) ; 1%)</code>. Nếu <code>R̄</code> tính trên đường đã cộng spread, độ lớn cú
+    sốc sẽ đổi:</p>
+  <div class="tw">
+    <table>
+      <thead><tr><th>Kỳ hạn</th><th class="n">Sốc 1 trên đường nhóm</th><th class="n">Nếu tính trên đường đã cộng spread</th></tr></thead>
+      <tbody>
+        <tr><td class="m">3M</td><td class="n">3,0675%</td><td class="n bad">3,9255%</td></tr>
+        <tr><td class="m">1Y</td><td class="n">3,1497%</td><td class="n bad">4,0000% · chạm trần</td></tr>
+        <tr><td class="m">3Y</td><td class="n">3,6569%</td><td class="n bad">4,0000% · chạm trần</td></tr>
+        <tr><td class="m">5Y</td><td class="n">3,8087%</td><td class="n bad">4,0000% · chạm trần</td></tr>
+        <tr><td class="m">10Y</td><td class="n">4,0000%</td><td class="n">4,0000%</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>Chênh tới 86 bp ở đầu ngắn, và từ 1Y trở đi cú sốc bị đẩy chạm trần 4% nên <strong>mất hết cấu trúc kỳ
+    hạn</strong>. Cách làm đề xuất giữ <code>R̄</code> trên đường nhóm như hôm nay, nên độ lớn 6 cú sốc
+    <strong>không đổi so với hiện tại</strong>, và trái phiếu tăng vốn chịu đúng cùng cú sốc như trái phiếu
+    thường cùng nhóm. Đây cũng là lý do thiết kế không cần panel lịch sử gộp.</p>
+
+  <h3>Bốn đường cong tại 31/03/2026</h3>
+  <p style="font-size:14px; color:var(--muted)">LB_G1, giả định <code>δ = 143 bp</code>, <code>a = 0,1827</code>.</p>
+  <div class="tw">
+    <table>
+      <thead>
+        <tr><th>τ</th><th class="n">Phần bù δ·B/τ</th><th class="n">Đường nhóm</th><th class="n">Tier 2, gốc</th><th class="n">Nhóm, sốc 1</th><th class="n">Tier 2, sốc 1</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="m">3M</td><td class="n">1,3978%</td><td class="n">7,6270%</td><td class="n">9,0249%</td><td class="n">10,6945%</td><td class="n">12,0923%</td></tr>
+        <tr><td class="m">1Y</td><td class="n">1,3070%</td><td class="n">7,5302%</td><td class="n">8,8372%</td><td class="n">10,6799%</td><td class="n">11,9868%</td></tr>
+        <tr><td class="m">3Y</td><td class="n">1,1008%</td><td class="n">7,6934%</td><td class="n">8,7942%</td><td class="n">11,3503%</td><td class="n">12,4511%</td></tr>
+        <tr><td class="m">5Y</td><td class="n">0,9374%</td><td class="n">8,4065%</td><td class="n">9,3439%</td><td class="n">12,2151%</td><td class="n">13,1526%</td></tr>
+        <tr><td class="m">10Y</td><td class="n">0,6567%</td><td class="n">8,5427%</td><td class="n">9,1993%</td><td class="n">12,5427%</td><td class="n">13,1993%</td></tr>
+        <tr><td class="m">30Y</td><td class="n">0,2598%</td><td class="n">8,9786%</td><td class="n">9,2383%</td><td class="n">12,9786%</td><td class="n">13,2383%</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>Cột phần bù không phụ thuộc kịch bản: hiệu hai cột Tier 2 và nhóm luôn đúng bằng nó, ở cả kịch bản gốc
+    lẫn cả sáu kịch bản sốc.</p>
+</section>
+
+
+<!-- ===================== 08 ===================== -->
+<section>
+  <span class="snum">08</span>
+  <h2>Chi phí và kiểm chứng</h2>
+
+  <h3>Chi phí — đo thực tế</h3>
+  <p>Cả 25 mã tăng vốn đều là <code>European</code> (20 cố định, 5 thả nổi theo SOB4) nên tất cả chạy
+    <code>step_days = 21</code>.</p>
+  <div class="tw">
+    <table>
+      <thead><tr><th>Cấu hình cây</th><th class="n">Dựng + định giá</th><th class="n">Định giá lại</th></tr></thead>
+      <tbody>
+        <tr><td>1 nhân tố, 21 ngày</td><td class="n">0,24 s</td><td class="n">0,012 s</td></tr>
+        <tr><td>2 nhân tố, 21 ngày</td><td class="n">0,26 s</td><td class="n">0,07 s</td></tr>
+        <tr><td>1 nhân tố, 5 ngày</td><td class="n">1,31 s</td><td class="n">0,041 s</td></tr>
+        <tr><td>2 nhân tố, 5 ngày</td><td class="n bad">44 s</td><td class="n bad">67 s</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>Một lần Brent ≈ 12 lần định giá → <strong>25 mã × 12 × 0,25 s ≈ 75 giây</strong> cho một ngày quan sát.
+    Năm ngày quan sát mỗi tháng ≈ 6 phút; backfill ba năm ≈ 30 phút, một lần duy nhất nhờ cache. Không cần
+    tối ưu gì thêm. Dòng cuối bảng chỉ thành vấn đề nếu sau này có trái phiếu tăng vốn kiểu
+    <code>American</code> — khi đó phải ép hiệu chỉnh trên lưới 21 ngày.</p>
+  <p><strong>Không hạ lưới khi hiệu chỉnh.</strong> Lưới 56 ngày lệch +2,06 bp mệnh giá ở cấu phần floor,
+    lưới 28 ngày nằm ngoài cụm hội tụ ~1,3 bp. Hiệu chỉnh trên lưới thô hơn lưới định giá sẽ đổ toàn bộ sai
+    số rời rạc đó vào <code>δ</code>, thành sai số mức cố định trong bảng công bố.</p>
+
+  <h3>Phép kiểm</h3>
+  <div class="tw">
+    <table>
+      <thead><tr><th>Phép kiểm</th><th class="n">Ngưỡng</th></tr></thead>
+      <tbody>
+        <tr><td>Đặc tả (9) đúng tại <strong>mọi</strong> τ — 4000 điểm từ 1 ngày tới 30Y</td><td class="n">&lt; 0,001 bp</td></tr>
+        <tr><td><code>δ = 0</code> tái tạo đúng đường định giá hiện tại, từng chữ số</td><td class="n">1e−12</td></tr>
+        <tr><td>Khứ hồi: định giá lại tại <code>δ</code> đã dò phải ra đúng giá quan sát</td><td class="n">1e−6 /100</td></tr>
+        <tr><td>Đơn điệu: giá giảm ngặt theo <code>δ</code> trên toàn bracket</td><td class="n">nghiêm ngặt</td></tr>
+        <tr><td>Xác suất nhánh: <code>min p<sub>u</sub> = min p<sub>d</sub> = 1/24</code>; <code>p<sub>m</sub></code> cắt 0 tại <code>s = √2</code></td><td class="n">1e−12</td></tr>
+        <tr><td>Tương quan thực tế khớp <code>ρ</code> tại node trung tâm</td><td class="n">10 chữ số</td></tr>
+        <tr><td>Spread bất biến qua cả 7 kịch bản</td><td class="n">1e−14</td></tr>
+        <tr><td>Độ lớn cú sốc trùng từng số với pipeline hiện tại</td><td class="n">1e−15</td></tr>
+        <tr><td>Nguyên tắc vá trên tháng thưa dựng tay (chỉ có 1Y và 10Y; rồi tháng rỗng)</td><td class="n">chính xác</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+
+<!-- ===================== 09 ===================== -->
+<section>
+  <span class="snum">09</span>
+  <h2>Điều kiện để triển khai</h2>
+  <p class="dek">Hai việc nằm ngoài phạm vi thay đổi này nhưng chặn đường nó.</p>
+
+  <div class="note warn">
+    <span class="tag">1 · Dữ liệu giá chưa tồn tại</span>
+    <p>Cột <code>premium</code> hiện chứa <strong>mệnh giá</strong> (số tròn như
+      <code>300,000,000,000</code>, âm cho giấy tờ của tổ chức khác), không phải số tiền dirty. Với dữ liệu
+      hiện tại, <code>|premium|/|par_value| × 100</code> ra đúng 100,0 ở mọi dòng và mọi <code>δ</code> sẽ
+      bằng 0. Cần nạp lại <code>premium</code> và cột mới <code>par_value</code> bằng số liệu giao dịch thật.
+      Code sẽ dừng với thông báo rõ nếu gặp trường hợp này.</p>
+  </div>
+
+  <div class="note warn">
+    <span class="tag">2 · Lỗi σ dồn 1,25ⁿ trong vòng lặp sốc</span>
+    <p><code>main_v2.py:249-250</code> nhân <code>sigma_r</code>/<code>sigma_L</code> với 1,25 <em>tại
+      chỗ</em> mà không reset, nên hệ số dồn thành <code>1,25⁶ ≈ 3,81</code> ở kịch bản 6. Lỗi này đang bóp
+      méo mọi ΔEVE hiện tại và sẽ tương tác với thay đổi Tier 2: đường cong cao hơn cộng σ bị thổi 3,8 lần sẽ
+      đẩy thêm rất nhiều node vượt giá thực hiện quyền mua, khiến chênh lệch Tier 2 ở kịch bản 4–6 trông
+      không giải thích được. Đề nghị sửa ở <strong>commit riêng</strong>, đo tác động độc lập trước.</p>
+  </div>
+
+  <h3>Thay đổi lược đồ dữ liệu</h3>
+  <div class="tw">
+    <table>
+      <thead><tr><th>Cột</th><th>Thay đổi</th><th>Giá trị</th></tr></thead>
+      <tbody>
+        <tr><td class="m">group</td><td>đổi nghĩa</td><td>Chỉ <code>LB_G1</code>/<code>LB_G2</code>/<code>LB_G3</code>. 25 dòng đang ghi <code>Tier2</code> điền lại nhóm thật</td></tr>
+        <tr><td class="m">is_tier2</td><td><strong>mới</strong></td><td>Cờ tăng vốn. Token lạ → báo lỗi, không mặc định</td></tr>
+        <tr><td class="m">premium</td><td>đổi nghĩa</td><td>Số tiền dirty (VND), có dấu</td></tr>
+        <tr><td class="m">par_value</td><td><strong>mới</strong></td><td>Mệnh giá (VND)</td></tr>
+        <tr><td class="m">price_obs_date</td><td><strong>mới</strong></td><td>Ngày quan sát giá</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Thứ tự thực hiện</h3>
+  <ol>
+    <li>Tách <code>src/bond_pricer.py</code> khỏi vòng lặp của <code>main_v2.py</code> — module hiệu chỉnh
+      phải định giá được tại ngày quan sát. Kiểm: toàn bộ 42 dòng ra kết quả trùng tới 1e−12.</li>
+    <li>Sửa lỗi σ dồn, commit riêng.</li>
+    <li><code>src/tier2_spread.py</code>: đọc dữ liệu, kiểm lược đồ, dựng đường Tier 2 trên lưới mịn, gán rổ
+      kỳ hạn.</li>
+    <li>Di trú <code>bond placeholder.csv</code>.</li>
+    <li>Bình quân và vá — hàm thuần, chưa cần định giá.</li>
+    <li>Dò <code>δ</code> cho từng quan sát, cache theo nội dung.</li>
+    <li>Nối dây <code>main_v2.py</code>, xoá <code>TIER_2_TYPE</code> và các artefact Excel cũ.</li>
+  </ol>
+</section>
+
+<footer>
+  <p><strong>Nguồn tham chiếu:</strong> John Hull và Alan White, <em>Multi-Curve Modeling Using Trees</em>, in trong <em>Innovations in Derivatives Markets</em>, Springer Proceedings in Mathematics and Statistics, 2016, tr. 171–189 (bản tháng 4/2015, sửa 24/11/2015). Bản PDF nằm ở <code>1. Code/MulticurveModeling.pdf</code>.</p>
+  <p>Mọi con số trong tài liệu này được đo trực tiếp trên mã nguồn và dữ liệu của
+    <code>call_put_SNH_v2/call_put_SNH</code>, không phải ước lượng. Mức <code>δ = 143 bp</code> là giả định
+    minh hoạ — giá trị thật sẽ đến từ dữ liệu giao dịch khi được nạp.</p>
+</footer>
+
+</div>
+
+<script>
+(function () {
+  var svg = document.getElementById('decay');
+  if (!svg) return;
+  var W = 760, H = 320, ml = 54, mr = 124, mt = 18, mb = 44;
+  var w = W - ml - mr, h = H - mt - mb;
+  var lo = 0.25, hi = 30;
+  var lx = function (t) { return ml + Math.log(t / lo) / Math.log(hi / lo) * w; };
+  var ly = function (v) { return mt + (1 - v) * h; };
+  var NS = 'http://www.w3.org/2000/svg';
+  function el(n, a) { var e = document.createElementNS(NS, n); for (var k in a) e.setAttribute(k, a[k]); return e; }
+
+  [0, 0.25, 0.5, 0.75, 1].forEach(function (v) {
+    svg.appendChild(el('line', { x1: ml, x2: ml + w, y1: ly(v), y2: ly(v),
+      stroke: 'var(--rule)', 'stroke-width': v === 0 ? 1 : 0.6 }));
+    var t = el('text', { x: ml - 10, y: ly(v) + 4, 'text-anchor': 'end',
+      fill: 'var(--muted)', 'font-size': '11.5', 'font-family': 'IBM Plex Mono, monospace' });
+    t.textContent = v.toFixed(2);
+    svg.appendChild(t);
+  });
+
+  [[0.25, '3M'], [1, '1Y'], [3, '3Y'], [5, '5Y'], [10, '10Y'], [30, '30Y']].forEach(function (p) {
+    svg.appendChild(el('line', { x1: lx(p[0]), x2: lx(p[0]), y1: ly(0), y2: ly(0) + 5,
+      stroke: 'var(--rule)', 'stroke-width': 1 }));
+    var t = el('text', { x: lx(p[0]), y: ly(0) + 20, 'text-anchor': 'middle',
+      fill: 'var(--muted)', 'font-size': '11.5', 'font-family': 'IBM Plex Mono, monospace' });
+    t.textContent = p[1];
+    svg.appendChild(t);
+  });
+
+  var yl = el('text', { x: ml - 10, y: mt - 4, 'text-anchor': 'end', fill: 'var(--muted)',
+    'font-size': '11', 'font-family': 'IBM Plex Mono, monospace' });
+  yl.textContent = 'B(τ)/τ';
+  svg.appendChild(yl);
+
+  var series = [
+    { n: 'LB_G3', a: 1.026880483917802, c: 'var(--warn)' },
+    { n: 'LB_G2', a: 0.1897463628519041, c: 'var(--muted)' },
+    { n: 'LB_G1', a: 0.18273340792314074, c: 'var(--accent)' }
+  ];
+
+  var ends = [];
+  series.forEach(function (s) {
+    var pts = [], i, t, v;
+    for (i = 0; i <= 240; i++) {
+      t = lo * Math.pow(hi / lo, i / 240);
+      v = (1 - Math.exp(-s.a * t)) / (s.a * t);
+      pts.push(lx(t).toFixed(2) + ',' + ly(v).toFixed(2));
+    }
+    svg.appendChild(el('polyline', { points: pts.join(' '), fill: 'none', stroke: s.c,
+      'stroke-width': s.n === 'LB_G2' ? 1.4 : 2, 'stroke-linejoin': 'round',
+      'stroke-dasharray': s.n === 'LB_G2' ? '4 3' : 'none' }));
+    var vEnd = (1 - Math.exp(-s.a * hi)) / (s.a * hi);
+    svg.appendChild(el('circle', { cx: lx(hi), cy: ly(vEnd), r: 3, fill: s.c }));
+    ends.push({ s: s, y: ly(vEnd), yv: vEnd });
+  });
+
+  ends.sort(function (p, q) { return p.y - q.y; });
+  for (var i = 1; i < ends.length; i++) {
+    if (ends[i].y - ends[i - 1].y < 15) ends[i].y = ends[i - 1].y + 15;
+  }
+  ends.forEach(function (e) {
+    var yTrue = ly(e.yv);
+    if (Math.abs(e.y - yTrue) > 1) {
+      svg.appendChild(el('path', {
+        d: 'M' + (lx(hi) + 4) + ',' + yTrue.toFixed(1) + ' L' + (lx(hi) + 11) + ',' + e.y.toFixed(1),
+        fill: 'none', stroke: e.s.c, 'stroke-width': 1, opacity: '0.55'
+      }));
+    }
+    var lab = el('text', { x: lx(hi) + 14, y: e.y + 4, fill: e.s.c, 'font-size': '12',
+      'font-family': 'IBM Plex Mono, monospace' });
+    lab.textContent = e.s.n + '  ' + e.yv.toFixed(3);
+    svg.appendChild(lab);
+  });
+})();
+</script>

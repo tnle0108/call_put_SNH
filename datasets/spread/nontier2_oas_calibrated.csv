@@ -1,0 +1,2 @@
+bond_id,obs_date,group,tenor_bucket,par_value,obs_dirty_price,delta,status,n_eval,resid_price,message,price_hash
+VPBB2427001_new (Roll 1)_1,2025-08-18,LB_G2,2Y,4000000000000.0,100.0,0.0013964588160975,ok,8,6.83726852912514e-10,,2edc096370dd54e6a73a2ecfb4212ca6e21f1f1d

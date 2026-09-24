@@ -1,0 +1,377 @@
+#%%
+
+import pandas as pd
+import numpy as np
+import sys
+from datetime import timedelta
+from dataclasses import dataclass
+from pathlib import Path
+from datetime import date
+from dateutil.relativedelta import relativedelta
+
+sys.path.insert(0, str(Path.cwd().parents[0]))
+
+from callput import (
+    BondSchedule,
+    CouponPeriod,
+)
+
+#%%
+# _PACKAGE_SRC = Path(__file__).resolve().parents[1]
+# _HOLIDAY = _PACKAGE_SRC / "datasets" / "holidays"
+extra_working_days = {
+    pd.Timestamp("2026-01-10"),
+    pd.Timestamp("2024-05-04"),
+    pd.Timestamp("2025-04-26"),
+}
+
+from src.map_curve import MapCurve
+
+
+def tenor_to_years(tenor: str) -> float:
+    tenor = str(tenor).strip().upper()
+    if tenor.endswith("Y"):
+        return int(tenor[:-1])
+    elif tenor.endswith("M"):
+        return int(tenor[:-1]) / 12.0
+    elif tenor.endswith("W"):
+        return int(tenor[:-1]) / 52.0
+    elif tenor.endswith("N"):
+        return 1 / 365.0
+    else:
+        raise ValueError(f"Unsupported tenor: {tenor}")
+
+
+def get_known_rate(
+    ref_tenor: str,
+    fixing_date: pd.Timestamp,
+    margin: float,
+    ref_df: pd.DataFrame,
+    convention: str,
+) -> float:
+    
+    hist_curve = MapCurve(
+        rpd=fixing_date,
+        df = ref_df,
+        convention=convention,
+    ).map_curve()
+
+    t = tenor_to_years(ref_tenor)
+    ref_rate = hist_curve.zero_rate(t)
+    return float(ref_rate) + float(margin)
+
+def load_holiday_calendar(folder):
+    holiday_dict = {}
+
+    for file in Path(folder).glob("*.csv"):
+        country = file.stem
+
+        df = pd.read_csv(file)
+
+        holidays = set(
+            pd.to_datetime(df["Date"]).dt.normalize()
+        )
+
+        holiday_dict[country] = holidays
+
+    return holiday_dict
+
+
+
+
+def adjust_following(date, holidays):
+    date = pd.Timestamp(date).normalize()
+
+    while True:
+        if date in holidays:
+            date += timedelta(days=1)
+            continue
+
+        if date.weekday() >= 5 and date not in extra_working_days:
+            date += timedelta(days=1)
+            continue
+
+        break
+
+    return date
+
+
+def nan_to_none(x):
+    return None if pd.isna(x) else float(x)
+
+@dataclass
+class CouponSchedule:
+    df: pd.DataFrame
+    holiday_calendar: dict
+    country: str
+
+    def build_coupon_schedule_df(self) -> pd.DataFrame:
+        rows = []
+        for _, bond in self.df.iterrows():
+            print(bond['bond_id'])
+            issue_date = pd.to_datetime(bond["issue_date"])
+            maturity_date = pd.to_datetime(bond["maturity_date"])
+            accrual = float(bond["coupon_accrual"])
+            months = int(round(accrual * 12))
+
+            pay_dates = pd.date_range(
+                start=issue_date, end=maturity_date, freq=pd.DateOffset(months=months),
+            )[1:]
+            holidays = self.holiday_calendar.get(self.country, set())
+            pay_dates = [adjust_following(d, holidays) for d in pay_dates]
+    
+            margin_dates_raw = str(bond["margin_date"]) if pd.notna(bond["margin_date"]) and str(bond["margin_date"]).strip() else None
+            margin_values_raw = str(bond["margin"]) if pd.notna(bond["margin"]) and str(bond["margin"]).strip() else None
+
+            is_fixed = pd.notna(bond["annual_coupon_rate"])
+            for step, pay_date in enumerate(pay_dates, start=1):
+                if is_fixed:
+                    if pd.notna(bond["coupon_change_date"]):
+                        pay_values = [float(x) for x in str(bond["annual_coupon_rate"]).split(";")]
+                        coupon_change_dates = pd.to_datetime(str(bond["coupon_change_date"]).split(";"), format='mixed')
+                        coupon_change_dates = [adjust_following(d, holidays) for d in coupon_change_dates]
+                        if len(pay_values) != len(coupon_change_dates) + 1:
+                            raise ValueError(
+                                f"Expected {len(coupon_change_dates) + 1} coupon rates, "
+                                f"got {len(pay_values)}"
+                            )
+                   
+                        coupon = pay_values[0]
+                        for i,d in enumerate(coupon_change_dates):
+                            if pay_date > d:
+                                coupon = pay_values[i+1]
+                            else:
+                                break
+                    else:
+                        coupon = bond['annual_coupon_rate']
+                rows.append(
+                    {
+                        "bond_id": bond["bond_id"],
+                        "step": step,
+                        "pay_date": pay_date,
+                        "accrual": accrual,
+                        "coupon_type": "fixed" if is_fixed else "float",
+                        "fixed_rate": coupon if is_fixed else np.nan,
+                        "ref_curve": bond["ref_curve"],
+                        "ref_tenor": bond["ref_tenor"],
+                        "margin_dates_raw": margin_dates_raw,
+                        "margin_values_raw": margin_values_raw,
+                        "floor": bond["floor"],
+                        "cap": bond["cap"],
+                    }
+                )
+        return pd.DataFrame(rows)
+
+    def bulid_reset_schedule(self):
+        for _, bond in self.df.iterrows():
+            issue_date = pd.to_datetime(bond["issue_date"])
+            maturity_date = pd.to_datetime(bond["maturity_date"])
+            months = int(bond['ref_tenor'][:-1])
+            reset_dates = pd.date_range(
+                start = issue_date,
+                end = maturity_date,
+                freq = pd.DateOffset(months = months),
+            )
+            holidays = self.holiday_calendar.get(self.country, set())
+            reset_dates = [
+                pd.Timestamp(adjust_following(d, holidays))
+                for d in reset_dates
+            ]
+
+            if reset_dates and reset_dates[-1] == maturity_date:
+                reset_dates = reset_dates[:-1]
+
+            return reset_dates
+
+        return []
+
+def resolve_margin(margin_dates_raw, margin_values_raw, ref_date):
+    if margin_values_raw is None or pd.isna(margin_values_raw) or not str(margin_values_raw).strip():
+        return None
+    values = [float(x) for x in str(margin_values_raw).split(";")]
+    if margin_dates_raw is None or pd.isna(margin_dates_raw) or not str(margin_dates_raw).strip():
+        return values[0]
+    mdates = [pd.to_datetime(x.strip(), format="mixed") for x in str(margin_dates_raw).split(";")]
+    if len(values) != len(mdates) + 1:
+        raise ValueError(
+            f"margin có {len(values)} giá trị nhưng margin_date có {len(mdates)} mốc"
+        )
+    margin = values[0]
+    for i, d in enumerate(mdates):
+        if ref_date >= d:
+            margin = values[i + 1]
+        else:
+            break
+    return margin
+
+def days(d:date, start_date:date) -> int:
+    return(d-start_date).days
+def build(
+        reading: str,
+        rpd: date,
+        face: float,
+        maturity_date: pd.Timestamp,
+        coupon_accrual: float,
+        coupon_schedule_df: pd.DataFrame,
+        ref_dates: list[date] | None = None,
+        fixing_lag_days: float |None = None,
+        call_df: pd.DataFrame | None = None,
+        put_df: pd.DataFrame | None = None,
+        fixed_rate: list | None = None,
+        ref_curve_name: str | None = None,
+        curve_folder: str | None = None,
+        ref_convention: str | None = None,
+        apply_floor: bool = True,
+        apply_cap: bool = True,
+        ref_df: pd.DataFrame|None=None,
+) -> BondSchedule:
+    pays_all = coupon_schedule_df["pay_date"].sort_values().tolist()
+    months = round(coupon_accrual * 12)
+    first_start_all = pays_all[0] - relativedelta(months=months)
+    starts_all = [first_start_all] + pays_all[:-1]
+
+    future_pairs = [(s, p) for s, p in zip(starts_all, pays_all) if p > rpd]
+    if not future_pairs:
+        raise ValueError(f"No future coupon periods after rpd={rpd}")
+    starts, pays = map(list, zip(*future_pairs))
+
+    # raw_resets = ref_dates or []
+
+    # if fixing_lag_days:
+    #     resets = [r - pd.Timedelta(days=fixing_lag_days) for r in raw_resets]
+    # else:
+    #     resets = raw_resets
+
+    resets = ref_dates or []    
+    is_floating = fixed_rate is None
+    if is_floating:
+        margin_dates_map = coupon_schedule_df.set_index('pay_date')['margin_dates_raw']
+        margin_values_map = coupon_schedule_df.set_index('pay_date')['margin_values_raw']
+        floor_map = coupon_schedule_df.set_index('pay_date')['floor']
+        cap_map = coupon_schedule_df.set_index('pay_date')['cap']
+        tenor_map = coupon_schedule_df.set_index('pay_date')['ref_tenor']
+    else:
+        fixed_rate_map = coupon_schedule_df.set_index('pay_date')['fixed_rate']
+
+    periods = []
+    for pay, start in zip(pays, starts):
+        accrual = (pay - start).days / 365.0
+
+        if not is_floating:
+            periods.append(
+                CouponPeriod(
+                    pay_day=days(pay, rpd),
+                    accrual=accrual,
+                    accrual_start_day=days(start, rpd),
+                    fixed_rate=fixed_rate_map[pay],
+                    fixing_day=None,
+                    margin=0.0,
+                    ref_tenor_days=365,
+                    floor=None,
+                    cap=None,
+                )
+            )
+            continue
+
+        if reading == 'advance':
+            candidates = [r for r in resets if r < pay]
+        else:
+            candidates = [r for r in resets if r <= pay]
+
+        if not candidates:
+            raise ValueError(
+                f"No fixing date found for payment date {pay} (reading={reading})"
+            )
+
+        reset_selected = max(candidates)      # đây là RESET DATE thật, đã chọn đúng
+        fixing = (reset_selected - pd.Timedelta(days=fixing_lag_days) if fixing_lag_days else reset_selected)
+
+        if fixing <= rpd:
+            if curve_folder is None or ref_curve_name is None or ref_convention is None:
+                raise ValueError(
+                    f"Period with fixing {fixing} <= rpd {rpd} requires "
+                    f"curve_folder/ref_curve_name/ref_convention to look up the known rate"
+                )
+            margin_known = resolve_margin(margin_dates_map[pay], margin_values_map[pay], fixing)
+            known_rate = get_known_rate(
+                ref_tenor=tenor_map[pay],
+                fixing_date=fixing,
+                margin=0.0,  # chưa cộng margin
+                ref_df=ref_df,
+                convention=ref_convention,
+            )
+
+            ref_delta = tenor_to_years(tenor_map[pay])
+
+            # Continuous reference rate -> simple reference rate
+            known_rate = (
+                np.exp(known_rate * ref_delta) - 1.0
+            ) / ref_delta
+
+            # Add margin after conversion
+            known_rate += margin_known
+            # Sàn/trần phải áp CẢ cho kỳ đã cố định: về hợp đồng, lãi đã chốt là
+            # min(max(L + margin, floor), cap). Trước đây nhánh này emit
+            # floor=None, cap=None nên sàn bị bỏ — định giá thấp đi khi lãi tham
+            # chiếu xuống dưới sàn, mà không có cảnh báo nào.
+            known_floor = nan_to_none(floor_map[pay]) if apply_floor else None
+            known_cap = nan_to_none(cap_map[pay]) if apply_cap else None
+            if known_floor is not None:
+                known_rate = max(known_rate, known_floor)
+            if known_cap is not None:
+                known_rate = min(known_rate, known_cap)
+            periods.append(
+                CouponPeriod(
+                    pay_day=days(pay, rpd),
+                    accrual=accrual,
+                    accrual_start_day=days(start, rpd),
+                    fixed_rate=known_rate,
+                    fixing_day=None,
+                    margin=0.0,
+                    ref_tenor_days=365,
+                    floor=None,
+                    cap=None,
+                )
+            )
+            continue
+
+        margin = resolve_margin(margin_dates_map[pay], margin_values_map[pay], fixing)
+        periods.append(
+            CouponPeriod(
+                pay_day=days(pay, rpd),
+                accrual=accrual,
+                accrual_start_day=days(start, rpd),
+                fixing_day=days(fixing, rpd),
+                ref_tenor_days=365,
+                margin=margin if margin is not None else 0.0,
+                floor=nan_to_none(floor_map[pay]) if apply_floor else None,
+                cap=nan_to_none(cap_map[pay]) if apply_cap else None,
+            )
+        )
+
+    dropped_calls = call_df[call_df['call_date'] <= rpd] if call_df is not None and not call_df.empty else None
+    if dropped_calls is not None and not dropped_calls.empty:
+        print(f"[{None}] Warning: {len(dropped_calls)} call date(s) already in the past, dropped: {dropped_calls['call_date'].tolist()}")
+
+    dropped_puts = put_df[put_df['put_date'] <= rpd] if put_df is not None and not put_df.empty else None
+    if dropped_puts is not None and not dropped_puts.empty:
+        print(f"Warning: {len(dropped_puts)} put date(s) already in the past, dropped: {dropped_puts['put_date'].tolist()}")
+
+    call = (
+        {days(d, rpd): s for d, s in zip(call_df['call_date'], call_df['call_strike']) if d > rpd}
+        if call_df is not None and not call_df.empty
+        else {}
+    )
+    put = (
+        {days(d, rpd): s for d, s in zip(put_df['put_date'], put_df['put_strike']) if d > rpd}
+        if put_df is not None and not put_df.empty
+        else {}
+    )
+
+    return BondSchedule(
+        face=face,
+        maturity_day=days(maturity_date, rpd),
+        periods=periods,
+        call=call,
+        put=put,
+    )
