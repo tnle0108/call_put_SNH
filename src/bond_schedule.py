@@ -123,35 +123,64 @@ class CouponSchedule:
             margin_dates_raw = str(bond["margin_date"]) if pd.notna(bond["margin_date"]) and str(bond["margin_date"]).strip() else None
             margin_values_raw = str(bond["margin"]) if pd.notna(bond["margin"]) and str(bond["margin"]).strip() else None
 
-            is_fixed = pd.notna(bond["annual_coupon_rate"])
+            has_type_change = pd.notna(bond["coupon_type_change_date"]) and str(bond["coupon_type_change_date"]).strip()
+            type_change_date = (
+                adjust_following(pd.to_datetime(bond["coupon_type_change_date"], format='%m/%d/%Y'), holidays)
+                if has_type_change else None
+            )
+            has_fixed_rate = pd.notna(bond["annual_coupon_rate"]) and str(bond["annual_coupon_rate"]).strip()
+            has_ref_curve = pd.notna(bond["ref_curve"]) and str(bond["ref_curve"]).strip()
+
+            coupon_change_values = None
+            coupon_change_dates = None
+
+            if has_fixed_rate:
+                coupon_change_values = [float(x) for x in str(bond["annual_coupon_rate"]).split(";")]
+                if pd.notna(bond["coupon_change_date"]) and str(bond["coupon_change_date"]).strip():
+                    coupon_change_dates = pd.to_datetime(str(bond["coupon_change_date"]).split(";"), format='%m/%d/%Y')
+                    coupon_change_dates = [adjust_following(d, holidays) for d in coupon_change_dates]
+                    if len(coupon_change_values) != len(coupon_change_dates) + 1:
+                        raise ValueError(
+                            f"Expected {len(coupon_change_dates) + 1} coupon rates, "
+                            f"got {len(coupon_change_values)}"
+                        )
+                else:
+                    coupon_change_dates = []
+
+
             for step, pay_date in enumerate(pay_dates, start=1):
-                if is_fixed:
-                    if pd.notna(bond["coupon_change_date"]):
-                        pay_values = [float(x) for x in str(bond["annual_coupon_rate"]).split(";")]
-                        coupon_change_dates = pd.to_datetime(str(bond["coupon_change_date"]).split(";"), format='%m/%d/%Y')
-                        coupon_change_dates = [adjust_following(d, holidays) for d in coupon_change_dates]
-                        if len(pay_values) != len(coupon_change_dates) + 1:
-                            raise ValueError(
-                                f"Expected {len(coupon_change_dates) + 1} coupon rates, "
-                                f"got {len(pay_values)}"
-                            )
-                   
-                        coupon = pay_values[0]
-                        for i,d in enumerate(coupon_change_dates):
-                            if pay_date > d:
-                                coupon = pay_values[i+1]
-                            else:
-                                break
-                    else:
-                        coupon = bond['annual_coupon_rate']
+                if has_type_change:
+                    is_fixed_period = pay_date <= type_change_date
+                else:
+                    is_fixed_period = bool(has_fixed_rate)
+
+                if is_fixed_period and not has_fixed_rate:
+                    raise ValueError(
+                        f"Bond {bond['bond_id']} has fixed coupon type but no annual_coupon_rate specified"
+                    )
+
+                if not is_fixed_period and not has_ref_curve:
+                    raise ValueError(
+                        f"Bond {bond['bond_id']} has floating coupon type but no ref_curve specified"
+                    )
+                if is_fixed_period:
+                    coupon = coupon_change_values[0]
+                    for i, d in enumerate(coupon_change_dates):
+                        if pay_date > d:
+                            coupon = coupon_change_values[i + 1]
+                        else:
+                            break
+                else:
+                    coupon = np.nan
+
                 rows.append(
                     {
                         "bond_id": bond["bond_id"],
                         "step": step,
                         "pay_date": pay_date,
                         "accrual": accrual,
-                        "coupon_type": "fixed" if is_fixed else "float",
-                        "fixed_rate": coupon if is_fixed else np.nan,
+                        "coupon_type": "fixed" if is_fixed_period else "float",
+                        "fixed_rate": coupon if is_fixed_period else np.nan,
                         "ref_curve": bond["ref_curve"],
                         "ref_tenor": bond["ref_tenor"],
                         "margin_dates_raw": margin_dates_raw,
@@ -162,7 +191,7 @@ class CouponSchedule:
                 )
         return pd.DataFrame(rows)
 
-    def bulid_reset_schedule(self):
+    def build_reset_schedule(self):
         for _, bond in self.df.iterrows():
             issue_date = pd.to_datetime(bond["issue_date"])
             maturity_date = pd.to_datetime(bond["maturity_date"])
@@ -217,7 +246,6 @@ def build(
         fixing_lag_days: float |None = None,
         call_df: pd.DataFrame | None = None,
         put_df: pd.DataFrame | None = None,
-        fixed_rate: list | None = None,
         ref_curve_name: str | None = None,
         curve_folder: str | None = None,
         ref_convention: str | None = None,
@@ -243,27 +271,27 @@ def build(
     #     resets = raw_resets
 
     resets = ref_dates or []    
-    is_floating = fixed_rate is None
-    if is_floating:
-        margin_dates_map = coupon_schedule_df.set_index('pay_date')['margin_dates_raw']
-        margin_values_map = coupon_schedule_df.set_index('pay_date')['margin_values_raw']
-        floor_map = coupon_schedule_df.set_index('pay_date')['floor']
-        cap_map = coupon_schedule_df.set_index('pay_date')['cap']
-        tenor_map = coupon_schedule_df.set_index('pay_date')['ref_tenor']
-    else:
-        fixed_rate_map = coupon_schedule_df.set_index('pay_date')['fixed_rate']
+    type_map = coupon_schedule_df.set_index('pay_date')['coupon_type']
+    fixed_rate_map = coupon_schedule_df.set_index('pay_date')['fixed_rate']
+    margin_dates_map = coupon_schedule_df.set_index('pay_date')['margin_dates_raw']
+    margin_values_map = coupon_schedule_df.set_index('pay_date')['margin_values_raw']
+    floor_map = coupon_schedule_df.set_index('pay_date')['floor']
+    cap_map = coupon_schedule_df.set_index('pay_date')['cap']
+    tenor_map = coupon_schedule_df.set_index('pay_date')['ref_tenor']
+
 
     periods = []
     for pay, start in zip(pays, starts):
         accrual = (pay - start).days / 365.0
+        is_floating_period = type_map[pay] == 'float'
 
-        if not is_floating:
+        if not is_floating_period:
             periods.append(
                 CouponPeriod(
                     pay_day=days(pay, rpd),
                     accrual=accrual,
                     accrual_start_day=days(start, rpd),
-                    fixed_rate=fixed_rate_map[pay],
+                    fixed_rate=float(fixed_rate_map[pay]),
                     fixing_day=None,
                     margin=0.0,
                     ref_tenor_days=365,
@@ -358,12 +386,12 @@ def build(
         print(f"Warning: {len(dropped_puts)} put date(s) already in the past, dropped: {dropped_puts['put_date'].tolist()}")
 
     call = (
-        {days(d, rpd): s for d, s in zip(call_df['call_date'], call_df['call_strike']) if d > rpd}
+        {days(d, rpd): s for d, s in zip(call_df['call_date'], call_df['call_strike']) if d > rpd and pd.notna(s)}
         if call_df is not None and not call_df.empty
         else {}
     )
     put = (
-        {days(d, rpd): s for d, s in zip(put_df['put_date'], put_df['put_strike']) if d > rpd}
+        {days(d, rpd): s for d, s in zip(put_df['put_date'], put_df['put_strike']) if d > rpd and pd.notna(s)}
         if put_df is not None and not put_df.empty
         else {}
     )

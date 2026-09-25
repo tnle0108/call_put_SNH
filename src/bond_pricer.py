@@ -103,7 +103,7 @@ class BondTermSheet:
     coupon_accrual: float = field(init=False)
     face_value: float = field(init=False)
     group: str = field(init=False)
-    fixed_rate: "list | None" = field(init=False, repr=False)
+    # fixed_rate: "list | None" = field(init=False, repr=False)
     reset_dates: list = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -130,16 +130,16 @@ class BondTermSheet:
         self.group = str(row["group"])
 
         if self.ref_curve_name is not None:
-            self.fixed_rate = None
+            # self.fixed_rate = None
             self.reset_dates = CouponSchedule(
                 df=self.frame,
                 holiday_calendar=self.holiday_calendar,
                 country=self.cfg.calendar_country,
-            ).bulid_reset_schedule()  # [sic] tên sai chính tả trong repo
+            ).build_reset_schedule()  # [sic] tên sai chính tả trong repo
         else:
-            self.fixed_rate = [
-                float(x) for x in str(row["annual_coupon_rate"]).split(";")
-            ]
+            # self.fixed_rate = [
+            #     float(x) for x in str(row["annual_coupon_rate"]).split(";")
+            # ]
             self.reset_dates = []
 
     # -- dựng ---------------------------------------------------------------
@@ -300,15 +300,22 @@ def selected_fixing(spec: BondTermSheet, rpd, *, reading="advance"):
     """Ngày fixing mà ``build()`` sẽ chọn cho kỳ coupon tương lai đầu tiên.
 
     Nhân bản logic ở ``bond_schedule.build`` để chặn trước được; nếu hàm đó đổi
-    thì bản sao này phải đổi theo.  Trả ``None`` khi không áp dụng.
+    thì bản sao này phải đổi theo.  Trả ``None`` khi không áp dụng.— bao gồm cả
+    trường hợp kỳ tương lai gần nhất vẫn đang ở giai đoạn fixed của một bond
+    chuyển đổi (đọc ``coupon_type`` từ ``spec.coupon_schedule`` để biết, không
+    còn dùng ``spec.is_floating`` làm đại diện).
     """
     if not spec.is_floating:
         return None
     rpd = pd.Timestamp(rpd)
-    pays = sorted(p for p in spec.coupon_schedule["pay_date"] if p > rpd)
-    if not pays:
+    sched = spec.coupon_schedule
+    future = sched[sched["pay_date"] > rpd].sort_values("pay_date")
+    if future.empty:
         return None
-    pay = pays[0]
+    first = future.iloc[0]
+    if first["coupon_type"] != "float":
+        return None
+    pay = first["pay_date"]
     cands = [r for r in spec.reset_dates
              if (r < pay if reading == "advance" else r <= pay)]
     if not cands:
@@ -361,7 +368,7 @@ def build_schedule(spec, rpd, *, reading="advance", apply_floor=True,
         ref_dates=spec.reset_dates,
         call_df=call_df,
         put_df=put_df,
-        fixed_rate=spec.fixed_rate,
+        # fixed_rate=spec.fixed_rate,
         fixing_lag_days=spec.cfg.fixing_lag_days,
         ref_curve_name=spec.ref_curve_name,
         curve_folder=str(spec.cfg.curve_folder),

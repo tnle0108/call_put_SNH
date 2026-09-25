@@ -112,7 +112,7 @@ coupon_schedule_df = CouponSchedule(
 # Cả hai đều CÓ ĐIỀU KIỆN. Trước đây `hw.calibrate(..., save=True)` chạy vô điều
 # kiện mỗi lần, tức ghi lại specs/hullwhite.json mỗi lần chạy — nên một bảng
 # spread dựng trước đó lặng lẽ lệch pha với bộ tham số đang có trên đĩa.
-date_columns = ["issue_date", "maturity_date", "call_exercise_dates", "put_exercise_dates", "coupon_change_date", "margin_date"]
+date_columns = ["issue_date", "maturity_date", "call_exercise_dates", "put_exercise_dates", "coupon_change_date", "margin_date", "coupon_type_change_date"]
 for col in date_columns:
     if col in bond_df.columns:
         bond_df[col] = bond_df[col].apply(normalize_coupon_change_date)
@@ -177,7 +177,7 @@ for i in ROW_SELECTION:
     spec = BondTermSheet.from_bond_df(
         bond_df, coupon_schedule_df, holiday_calendar, PRICING_CFG, iloc=i)
     bond_id = spec.bond_id
-    print("\n" + "=" * 80)
+    print("\n" + "=" * 120)
     print(bond_id)
     ref_curve_name = spec.ref_curve_name
     maturity_date = spec.maturity_date
