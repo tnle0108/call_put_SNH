@@ -195,7 +195,7 @@ class BondTermSheet:
             return dates, [float(row[strike_col]) / face] * len(dates)
 
         def explicit(date_col, strike_col):
-            dates = [pd.to_datetime(x.strip(), format="mixed")
+            dates = [pd.to_datetime(x.strip(), format="%m/%d/%Y")
                      for x in str(row[date_col]).split(";")]
             return dates, [float(x) / face for x in str(row[strike_col]).split(";")]
 

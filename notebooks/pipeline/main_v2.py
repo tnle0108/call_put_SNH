@@ -4,17 +4,12 @@ import numpy as np
 import sys
 import os
 import json
+from datetime import datetime, date
 
 from pathlib import Path
-print(sys.path.insert(0, str(Path.cwd().parents[1])))
+sys.path.insert(0, str(Path.cwd().parents[1]))
 
-from callput import (
-    CallPutTree,
-    CurveLeg,
-    compile_bond,
-)
-from src.map_curve import MapCurve
-from src.bond_schedule import CouponSchedule, load_holiday_calendar, build, adjust_following
+from src.bond_schedule import CouponSchedule, load_holiday_calendar
 from src.bond_pricer import (
     BondTermSheet, ModelParams, PricingConfig, price_bond_layered,
 )
@@ -27,7 +22,6 @@ from src.create_buffer_yield import calc_zyc_df
 
 from quantmr.model.shortrate.hullwhite import HullWhite
 from quantmr.curve.curvenode import CurveNode
-from Quant_Lib.curves import BenchmarkCurve
 
 #%%
 root = Path.cwd().resolve().parent.parent
@@ -80,6 +74,25 @@ PRICING_CFG = PricingConfig(
     calendar_country='vnd',
 )
 
+def _doc_bang(ten, nhan):
+    p = os.path.join(SPREAD_FOLDER_PATH, ten)
+    if os.path.exists(p):
+        return load_spread_table(p)
+    print(f"[!] chưa có {p} — {nhan}")
+    return None
+
+def normalize_coupon_change_date(x):
+    if pd.isna(x):
+        return x
+
+    if isinstance(x, (pd.Timestamp, datetime, date)):
+        return x.strftime("%m/%d/%Y")
+
+    if isinstance(x, str):
+        return x
+
+    return str(x)
+
 #%%
 bond_df = pd.read_csv(os.path.join(BOND_FOLDER_PATH, 'bond placeholder.csv'))
 validate_term_sheet(bond_df)
@@ -99,6 +112,21 @@ coupon_schedule_df = CouponSchedule(
 # Cả hai đều CÓ ĐIỀU KIỆN. Trước đây `hw.calibrate(..., save=True)` chạy vô điều
 # kiện mỗi lần, tức ghi lại specs/hullwhite.json mỗi lần chạy — nên một bảng
 # spread dựng trước đó lặng lẽ lệch pha với bộ tham số đang có trên đĩa.
+date_columns = ["issue_date", "maturity_date", "call_exercise_dates", "put_exercise_dates", "coupon_change_date", "margin_date"]
+for col in date_columns:
+    if col in bond_df.columns:
+        bond_df[col] = bond_df[col].apply(normalize_coupon_change_date)
+#%%
+GROUPS = ['LB_G1', 'LB_G2', 'LB_G3', 'LB_G4', 'NBFI', 'FB', 'vbma_bond_fi']
+for group in GROUPS:
+    _csv = os.path.join(CURVE_FOLDER_PATH, f"FI_ZYC_VND_{group}.csv")
+    ytm_df = pd.read_csv(os.path.join(CURVE_FOLDER_PATH, f"{group}.csv"), index_col=0, parse_dates=True)
+    if not os.path.exists(_csv):
+        zyc_df = calc_zyc_df(ytm_df=ytm_df).to_csv(_csv)
+
+
+
+#%%
 _base_csv = os.path.join(CURVE_FOLDER_PATH, f"{BASE_CURVE}.csv")
 if not os.path.exists(_base_csv):
     calc_zyc_df(ytm_df=vbma_bond_fi).to_csv(_base_csv)
@@ -123,14 +151,6 @@ bond_results = []
 # Hai bảng phần bù, đọc một lần ngoài vòng lặp. Cả hai do build_spreads.py dựng.
 # Thiếu bảng nào thì tầng đó coi như 0 — nói to chứ không im lặng.
 SPREAD_FOLDER_PATH = os.path.join(root, 'datasets', 'spread')
-
-
-def _doc_bang(ten, nhan):
-    p = os.path.join(SPREAD_FOLDER_PATH, ten)
-    if os.path.exists(p):
-        return load_spread_table(p)
-    print(f"[!] chưa có {p} — {nhan}")
-    return None
 
 
 oas_df = _doc_bang('nontier2_oas_monthly.csv',

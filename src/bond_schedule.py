@@ -128,7 +128,7 @@ class CouponSchedule:
                 if is_fixed:
                     if pd.notna(bond["coupon_change_date"]):
                         pay_values = [float(x) for x in str(bond["annual_coupon_rate"]).split(";")]
-                        coupon_change_dates = pd.to_datetime(str(bond["coupon_change_date"]).split(";"), format='mixed')
+                        coupon_change_dates = pd.to_datetime(str(bond["coupon_change_date"]).split(";"), format='%m/%d/%Y')
                         coupon_change_dates = [adjust_following(d, holidays) for d in coupon_change_dates]
                         if len(pay_values) != len(coupon_change_dates) + 1:
                             raise ValueError(
@@ -191,7 +191,7 @@ def resolve_margin(margin_dates_raw, margin_values_raw, ref_date):
     values = [float(x) for x in str(margin_values_raw).split(";")]
     if margin_dates_raw is None or pd.isna(margin_dates_raw) or not str(margin_dates_raw).strip():
         return values[0]
-    mdates = [pd.to_datetime(x.strip(), format="mixed") for x in str(margin_dates_raw).split(";")]
+    mdates = [pd.to_datetime(x.strip(), format="%m/%d/%Y") for x in str(margin_dates_raw).split(";")]
     if len(values) != len(mdates) + 1:
         raise ValueError(
             f"margin có {len(values)} giá trị nhưng margin_date có {len(mdates)} mốc"

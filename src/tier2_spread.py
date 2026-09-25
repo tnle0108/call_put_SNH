@@ -44,7 +44,7 @@ __all__ = [
 ]
 
 TENOR_ORDER = list(TENOR_MONTHS)            # 3M .. 30Y, 18 pillar
-ISSUER_GROUPS = ("LB_G1", "LB_G2", "LB_G3")
+ISSUER_GROUPS = ("LB_G1", "LB_G2", "LB_G3", "LB_G4", "NBFI", "FB")  # nhóm tổ chức phát hành trái phiếu, dùng để phân đường cong chiết khấu
 
 PRICE_MIN, PRICE_MAX = 20.0, 200.0   # % mệnh giá; chỉ để bắt sai đơn vị
 
@@ -179,7 +179,7 @@ def load_price_obs(path, bond_df: pd.DataFrame, *,
                           par_value=[], face=[], group=[], coupon_rate=[])
 
     obs["bond_id"] = obs["bond_id"].str.strip()
-    obs["obs_date"] = pd.to_datetime(obs["obs_date"], format="mixed")
+    obs["obs_date"] = pd.to_datetime(obs["obs_date"], format="%m/%d/%Y")
 
     sheet = bond_df.set_index(bond_df["bond_id"].astype(str).str.strip())
     unknown = sorted(set(obs["bond_id"]) - set(sheet.index))
