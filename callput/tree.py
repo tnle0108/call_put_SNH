@@ -79,53 +79,34 @@ class CallPutTree:
         self.fix_factor = self.lat.factors[-1]
 
         self.phi = np.empty(bond.n_steps)
-        self.step_discount = []
+        self.phi_ref = self.phi
+        self.step_discount: list[np.ndarray] = []
+        self.ref_discount: list[np.ndarray] = []
         self._fit_to_curve()
 
-    def _fit_to_curve(self) -> None:
-        """Solve ``phi(t)`` by forward induction so the lattice reprices the curve.
-
-        The node rate over step ``i`` is the **step-length rate**, not an
-        instantaneous short rate::
+    def _fit_leg(
+        self, leg: CurveLeg, factor
+    ) -> tuple[np.ndarray, list[np.ndarray]]:
+        """Forward induction cho MỘT đường cong: tìm ``phi_i`` sao cho lattice của
+        ``factor`` reprice đúng ``leg.discount``.
 
             R_i(j) = [B(dt_i) / dt_i] * x_j + phi_i
+            phi_i  = ln( sum_j Q_i(j) exp(-B(dt_i) x_j) / P(0, t_{i+1}) ) / dt_i
 
-        The ``B(dt)/dt`` coefficient matters because ``dt`` is not small: it is
-        ``1 - a dt / 2`` to first order, 0.9948 at a 21-day step and 0.9776 at a
-        quarterly one.  Using ``r = x + phi`` instead leaves an O(a dt) bias in how
-        the one-step discount responds to ``x``.  The curve fit hides it -- both
-        forms reprice the curve exactly -- so it surfaces only in the optionality:
-        measured on a 10-year callable, it overstates the call by 1.1 bp of face at
-        a 21-day step and 4.6 bp at a quarterly one.
-
-        ``phi_i`` is the only unknown and it is common to every node of the step, so
-        the Arrow-Debreu condition solves it in closed form::
-
-            sum_j Q_i(j) * exp(-R_i(j) * dt_i) = P(0, t_{i+1})
-
-            phi_i = ln( sum_j Q_i(j) exp(-B(dt_i) x_j) / P(0, t_{i+1}) ) / dt_i
-
-        with ``Q`` the Arrow-Debreu prices carried forward, ``Q_0 = 1``.  Nothing is
-        taken from the continuous-time model: no ``A(t,T)``, no convexity term.  An
-        earlier version seeded ``A`` analytically and corrected it by a scalar per
-        step; the seed cancels identically between the numerator and denominator of
-        that scalar, so this is the same tree with the redundant term removed
-        (verified: 1.1e-15 per node, prices equal to 1e-12 bp).
-
-        Only the discount factor is involved, so the induction runs on the first
-        factor alone; the correlation matrices have zero row and column sums, so a
-        two-factor joint reproduces that factor's marginal exactly.
+        Trả về ``(phi, step_discount)`` với ``step_discount[i][j] = exp(-R_i(j) dt_i)``.
         """
-        factor = self.lat.factors[0]
         days = self.bond.days
+        n_steps = self.bond.n_steps
+        phi = np.empty(n_steps)
+        steps: list[np.ndarray] = []
         weights = np.ones(1)
-        for i in range(self.bond.n_steps):
-            dt = (int(days[i + 1]) - int(days[i])) / self.disc.denom
-            raw = np.exp(-hw_B(self.disc.a, dt) * factor.x[i])
-            target = self.disc.discount(int(days[i + 1]))
-            self.phi[i] = np.log(float((weights * raw).sum()) / target) / dt
-            step = np.exp(-self.phi[i] * dt) * raw
-            self.step_discount.append(step)
+        for i in range(n_steps):
+            dt = (int(days[i + 1]) - int(days[i])) / leg.denom
+            raw = np.exp(-hw_B(leg.a, dt) * factor.x[i])
+            target = leg.discount(int(days[i + 1]))
+            phi[i] = np.log(float((weights * raw).sum()) / target) / dt
+            step = np.exp(-phi[i] * dt) * raw
+            steps.append(step)
             flow = weights * step
             nxt = np.zeros(int(factor.n[i + 1]))
             for branch in range(3):
@@ -133,6 +114,77 @@ class CallPutTree:
                     nxt, factor.child[i][:, branch], flow * factor.prob[i][:, branch]
                 )
             weights = nxt
+        return phi, steps
+    
+    def _fit_to_curve(self) -> None:
+        """Fit lattice cho cả đường chiết khấu và đường tham chiếu.
+
+        Mỗi đường được fit độc lập trên marginal của factor tương ứng; ma trận
+        tương quan có tổng hàng/cột bằng 0 nên lattice hai factor vẫn tái tạo
+        chính xác marginal của từng factor, và ``rho`` không ảnh hưởng tới phi.
+        """
+        self.phi, self.step_discount = self._fit_leg(self.disc, self.lat.factors[0])
+        
+        if self.ref is self.disc:
+            # Một đường cong duy nhất: dùng lại, khỏi tính hai lần.
+            self.phi_ref = self.phi
+            self.ref_discount = self.step_discount
+        else:
+            self.phi_ref, self.ref_discount = self._fit_leg(
+                self.ref, self.lat.factors[-1]
+            )
+            
+    # def _fit_to_curve(self) -> None:
+    #     """Solve ``phi(t)`` by forward induction so the lattice reprices the curve.
+
+    #     The node rate over step ``i`` is the **step-length rate**, not an
+    #     instantaneous short rate::
+
+    #         R_i(j) = [B(dt_i) / dt_i] * x_j + phi_i
+
+    #     The ``B(dt)/dt`` coefficient matters because ``dt`` is not small: it is
+    #     ``1 - a dt / 2`` to first order, 0.9948 at a 21-day step and 0.9776 at a
+    #     quarterly one.  Using ``r = x + phi`` instead leaves an O(a dt) bias in how
+    #     the one-step discount responds to ``x``.  The curve fit hides it -- both
+    #     forms reprice the curve exactly -- so it surfaces only in the optionality:
+    #     measured on a 10-year callable, it overstates the call by 1.1 bp of face at
+    #     a 21-day step and 4.6 bp at a quarterly one.
+
+    #     ``phi_i`` is the only unknown and it is common to every node of the step, so
+    #     the Arrow-Debreu condition solves it in closed form::
+
+    #         sum_j Q_i(j) * exp(-R_i(j) * dt_i) = P(0, t_{i+1})
+
+    #         phi_i = ln( sum_j Q_i(j) exp(-B(dt_i) x_j) / P(0, t_{i+1}) ) / dt_i
+
+    #     with ``Q`` the Arrow-Debreu prices carried forward, ``Q_0 = 1``.  Nothing is
+    #     taken from the continuous-time model: no ``A(t,T)``, no convexity term.  An
+    #     earlier version seeded ``A`` analytically and corrected it by a scalar per
+    #     step; the seed cancels identically between the numerator and denominator of
+    #     that scalar, so this is the same tree with the redundant term removed
+    #     (verified: 1.1e-15 per node, prices equal to 1e-12 bp).
+
+    #     Only the discount factor is involved, so the induction runs on the first
+    #     factor alone; the correlation matrices have zero row and column sums, so a
+    #     two-factor joint reproduces that factor's marginal exactly.
+    #     """
+    #     factor = self.lat.factors[0]
+    #     days = self.bond.days
+    #     weights = np.ones(1)
+    #     for i in range(self.bond.n_steps):
+    #         dt = (int(days[i + 1]) - int(days[i])) / self.disc.denom
+    #         raw = np.exp(-hw_B(self.disc.a, dt) * factor.x[i])
+    #         target = self.disc.discount(int(days[i + 1]))
+    #         self.phi[i] = np.log(float((weights * raw).sum()) / target) / dt
+    #         step = np.exp(-self.phi[i] * dt) * raw
+    #         self.step_discount.append(step)
+    #         flow = weights * step
+    #         nxt = np.zeros(int(factor.n[i + 1]))
+    #         for branch in range(3):
+    #             np.add.at(
+    #                 nxt, factor.child[i][:, branch], flow * factor.prob[i][:, branch]
+    #             )
+    #         weights = nxt
 
     # -- constructors -------------------------------------------------------
     @classmethod
@@ -340,8 +392,15 @@ class CallPutTree:
             rate = np.full(np.shape(z_vals), src.fixed_rate, dtype=float)
         else:
             start = int(self.bond.days[fix_step])
-            a_coef, b_coef = self.ref.affine_zcb(start, start + src.ref_tenor_days)
-            bond_price = a_coef * np.exp(-b_coef * z_vals)
+            dt = (int(self.bond.days[fix_step+1]) - int(self.bond.days[fix_step])) / self.ref.denom
+            a_coef_dt, b_coef_dt = self.ref.affine_zcb(start, int(self.bond.days[fix_step+1]))
+            R_dt = hw_B(self.ref.a, dt) / dt * self.lat.factors[-1].x[fix_step] + self.phi_ref[fix_step]
+
+            a_coef, b_coef = self.ref.affine_zcb(start, start + src.ref_tenor_years)
+
+            z_vals_fitted = ((R_dt*dt)+ np.log(a_coef_dt))/b_coef_dt
+            # bond_price = a_coef * np.exp(-b_coef * z_vals)
+            bond_price = a_coef * np.exp(-b_coef * z_vals_fitted)
             rate = (1.0 / bond_price - 1.0) / src.ref_delta + src.margin
         if flags.floor and src.floor is not None:
             rate = np.maximum(rate, src.floor)

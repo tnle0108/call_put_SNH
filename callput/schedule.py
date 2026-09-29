@@ -87,7 +87,7 @@ class CouponPeriod:
     fixed_rate: float | None = None
     fixing_day: int | None = None
     margin: float = 0.0
-    ref_tenor_days: int | None = None
+    ref_tenor_years: int | None = None
     ref_delta: float | None = None
     floor: float | None = None
     cap: float | None = None
@@ -115,12 +115,12 @@ class CouponPeriod:
                 raise ValueError(
                     f"fixing_day must not follow pay_day (pay_day={self.pay_day})"
                 )
-            if not self.ref_tenor_days or self.ref_tenor_days <= 0:
+            if not self.ref_tenor_years or self.ref_tenor_years <= 0:
                 raise ValueError(
                     f"floating period paying at {self.pay_day} needs ref_tenor_days"
                 )
             if self.ref_delta is None:
-                self.ref_delta = self.ref_tenor_days / 365.0
+                self.ref_delta = self.ref_tenor_years 
         else:
             if self.floor is not None or self.cap is not None:
                 raise ValueError(
@@ -370,7 +370,7 @@ def _check_group_consistency(groups: list[FixingGroup]) -> None:
     tenors within a group describe no valid structure -- it is a term-sheet
     contradiction, and catching it here beats silently pricing one of them.
     """
-    fields = ("margin", "ref_tenor_days", "ref_delta", "floor", "cap")
+    fields = ("margin", "ref_tenor_years", "ref_delta", "floor", "cap")
     for g in groups:
         first = g.periods[0].src
         for other in g.periods[1:]:

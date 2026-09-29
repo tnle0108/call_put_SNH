@@ -293,6 +293,7 @@ for i in ROW_SELECTION:
             spec, VALUE_DATE,
             disc_df=disc_df, ref_df=ref_df, params=params,
             delta_full=delta_full, delta_straight=delta_straight,
+            ref_df_raw=ref_df_raw
         )
         full_price = res.full_price
         straight_price = res.straight_price

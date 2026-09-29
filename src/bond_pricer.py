@@ -352,7 +352,7 @@ def map_curves(spec, rpd, disc_df, ref_df, *, require_curve_history=False):
 # ---------------------------------------------------------------------------
 def build_schedule(spec, rpd, *, reading="advance", apply_floor=True,
                    apply_cap=True, ref_df=None, call_df=None, put_df=None,
-                   option_anchor=None):
+                   option_anchor=None, ref_df_raw = None):
     """Thay closure ``build_sched`` của bản cũ; mọi biến nâng lên tham số."""
     if call_df is None or put_df is None:
         c, p = spec.option_frames(rpd, anchor=option_anchor)
@@ -376,6 +376,7 @@ def build_schedule(spec, rpd, *, reading="advance", apply_floor=True,
         apply_floor=apply_floor,
         apply_cap=apply_cap,
         ref_df=ref_df,
+        ref_df_raw = ref_df_raw
     )
 
 
@@ -418,7 +419,7 @@ def build_tree(spec, rpd, *, disc_df, params, ref_df=None, reading="advance",
                apply_floor=True, apply_cap=True, step_days=None, min_step=None,
                option_anchor=None, disc_bump=0.0, ref_bump=0.0, disc_delta=0.0,
                ref_delta=0.0, refine_on_delta=True,
-               require_curve_history=False, sched=None):
+               require_curve_history=False, sched=None, ref_df_raw=None):
     """Một dòng term sheet + một ngày ``rpd`` -> ``(CompiledBond, CallPutTree)``.
 
     Thứ tự thao tác giữ đúng bản cũ — map đường cong, dựng lịch, compile, dựng
@@ -432,6 +433,7 @@ def build_tree(spec, rpd, *, disc_df, params, ref_df=None, reading="advance",
         sched = build_schedule(
             spec, rpd, reading=reading, apply_floor=apply_floor,
             apply_cap=apply_cap, ref_df=ref_df, option_anchor=option_anchor,
+            ref_df_raw=ref_df_raw
         )
     bond = compile_bond(
         sched,

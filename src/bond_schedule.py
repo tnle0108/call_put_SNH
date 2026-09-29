@@ -252,6 +252,7 @@ def build(
         apply_floor: bool = True,
         apply_cap: bool = True,
         ref_df: pd.DataFrame|None=None,
+        ref_df_raw: pd.DataFrame|None=None,
 ) -> BondSchedule:
     pays_all = coupon_schedule_df["pay_date"].sort_values().tolist()
     months = round(coupon_accrual * 12)
@@ -294,7 +295,7 @@ def build(
                     fixed_rate=float(fixed_rate_map[pay]),
                     fixing_day=None,
                     margin=0.0,
-                    ref_tenor_days=365,
+                    ref_tenor_years=tenor_to_years(tenor_map[pay]),
                     floor=None,
                     cap=None,
                 )
@@ -325,7 +326,7 @@ def build(
                 ref_tenor=tenor_map[pay],
                 fixing_date=fixing,
                 margin=0.0,  # chưa cộng margin
-                ref_df=ref_df,
+                ref_df=ref_df_raw,
                 convention=ref_convention,
             )
 
@@ -356,7 +357,7 @@ def build(
                     fixed_rate=known_rate,
                     fixing_day=None,
                     margin=0.0,
-                    ref_tenor_days=365,
+                    ref_tenor_years=tenor_to_years(tenor_map[pay]),
                     floor=None,
                     cap=None,
                 )
@@ -370,7 +371,7 @@ def build(
                 accrual=accrual,
                 accrual_start_day=days(start, rpd),
                 fixing_day=days(fixing, rpd),
-                ref_tenor_days=365,
+                ref_tenor_years=tenor_to_years(tenor_map[pay]),
                 margin=margin if margin is not None else 0.0,
                 floor=nan_to_none(floor_map[pay]) if apply_floor else None,
                 cap=nan_to_none(cap_map[pay]) if apply_cap else None,
