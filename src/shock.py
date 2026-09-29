@@ -36,7 +36,14 @@ class ShockScenario:
     def calc_delta_R (self, tenor:str):
         tenor_label = tenor.split("_")[-1]
         t_k = self.map_tenor[tenor_label]
-        R_avg = self.calc_R_average_for_each_tenor(tenor)
+        R_avg_list = []
+        for tn in ['3M', '6M', '1Y', '2Y', '5Y', '7Y', '10Y', '15Y', '20Y']:
+            try:
+                R_avg_tn = self.calc_R_average_for_each_tenor(tn)
+                R_avg_list.append(R_avg_tn)
+            except Exception:
+                continue
+        R_avg = np.mean(R_avg_list) if R_avg_list else np.nan
 
         delta_R_short_horz = max(min(R_avg * 0.85,0.05), 0.01)
         delta_R_short = delta_R_short_horz * np.exp(-t_k/4)
