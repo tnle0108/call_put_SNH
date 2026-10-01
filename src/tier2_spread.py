@@ -352,6 +352,7 @@ def calibrate_delta(spec: BondTermSheet, obs_date, obs_dirty_price, *,
     if option_anchor is None:
         option_anchor = spec.issue_date     # thang American cố định, xem docstring bond_pricer
 
+    tree_kw.setdefault("ref_df_raw", ref_df)
     n = [0]
 
     def f(delta):
