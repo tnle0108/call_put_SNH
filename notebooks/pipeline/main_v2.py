@@ -22,7 +22,6 @@ from src.tier2_spread import (
 )
 from src.shock import ShockScenario
 from src.calc_rho import calc_rho
-from src.create_buffer_yield import calc_zyc_df
 
 from quantmr.model.shortrate.hullwhite import HullWhite
 from quantmr.curve.curvenode import CurveNode
@@ -50,12 +49,6 @@ CALIBRATION_TENORS = {
     'sob4': [1/12, 2/12, 3/12, 6/12, 9/12, 1.0, 2.0, 3.0, 4.0, 5.0]
 }
 
-
-# CALIBRATION_TENORS = {
-#     BASE_CURVE.lower(): [3/12, 6/12, 9/12, 1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0,
-#                          5.0, 7.0, 10.0, 15.0, 20.0, 30.0],  # VBMA Bond FI
-#     'sob4': [1/12, 2/12, 3/12, 6/12, 9/12, 1.0, 2.0, 3.0, 4.0, 5.0],  # ZC VND TK SOB
-# }
 DISC_CONVENTION = 'ACT/365'
 REF_CONVENTION  = 'ACT/365'
 
@@ -140,11 +133,6 @@ def normalize_coupon_change_date(x):
 """Read bond data, validate term sheet, and load VBMA bond yield curve."""
 bond_df = pd.read_csv(os.path.join(BOND_FOLDER_PATH, 'term_sheet.csv')) # Read raw bond data from CSV file
 validate_term_sheet(bond_df) # Validate the term sheet data in the bond DataFrame, ensure that `group` and `is_tier2` columns are correctly formatted.
-vbma_bond_fi = pd.read_csv(
-    os.path.join(CURVE_FOLDER_PATH, "vbma_bond_fi.csv"),
-    index_col="Date",
-    parse_dates=True,
-) # Read the VBMA bond yield curve data from CSV file, set the "Date" column as index and parse it as datetime.
 
 holiday_calendar = load_holiday_calendar(HOLIDAY_FOLDER_PATH) # Load the holiday calendar for Vietnam from the specified folder path, which will be used for date calculations in bond pricing.
 coupon_schedule_df = CouponSchedule(
@@ -156,24 +144,14 @@ date_columns = ["issue_date", "maturity_date", "call_exercise_dates", "put_exerc
 for col in date_columns:
     if col in bond_df.columns:
         bond_df[col] = bond_df[col].apply(normalize_coupon_change_date)
-#%%
-GROUPS = ['LB_G1', 'LB_G2', 'LB_G3', 'LB_G4', 'NBFI', 'FB', 'vbma_bond_fi']
-for group in GROUPS:
-    _csv = os.path.join(CURVE_FOLDER_PATH, f"FI_ZYC_VND_{group}.csv")
-    ytm_df = pd.read_csv(os.path.join(CURVE_FOLDER_PATH, f"{group}.csv"), index_col=0, parse_dates=True)
-    if not os.path.exists(_csv):
-        zyc_df = calc_zyc_df(ytm_df=ytm_df).to_csv(_csv)
-
-
 
 #%%
 # Base curve: bootstrap it if missing, calibrate Hull-White if its parameters are missing.
 # Both steps are CONDITIONAL. `hw.calibrate(..., save=True)` used to run unconditionally,
 # rewriting specs/hullwhite.json on every run, so a previously built spread table silently
 # drifted out of sync with the parameter set on disk.
-_base_csv = os.path.join(CURVE_FOLDER_PATH, f"{BASE_CURVE}.csv")
-if not os.path.exists(_base_csv):
-    calc_zyc_df(ytm_df=vbma_bond_fi).to_csv(_base_csv)
+# _base_csv = os.path.join(CURVE_FOLDER_PATH, f"{BASE_CURVE}.csv")
+
 
 with open(HULLWHITE_FILE_PATH, 'r', encoding='utf-8') as f:
     _hw_all = json.load(f)
@@ -233,14 +211,7 @@ for i in ROW_SELECTION:
     bond_group = spec.group
     zyc_name = f'FI_ZYC_VND_{bond_group}'
     zyc_path = Path(CURVE_FOLDER_PATH) / f"{zyc_name}.csv"
-
-    if zyc_path.exists():
-        zyc_df = pd.read_csv(zyc_path, index_col=0, parse_dates=True)
-    else:
-        ytm_df = pd.read_csv(os.path.join(CURVE_FOLDER_PATH, f'{bond_group}.csv'),
-                             index_col=0, parse_dates=True)
-        zyc_df = calc_zyc_df(ytm_df)
-        zyc_df.to_csv(zyc_path)     # write only right after bootstrapping, not every loop
+    zyc_df = pd.read_csv(zyc_path, index_col=0, parse_dates=True)
 
     CurveNode.get(
         zyc_name,

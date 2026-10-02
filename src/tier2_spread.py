@@ -31,7 +31,7 @@ import pandas as pd
 from scipy.optimize import brentq
 
 from src.bond_pricer import BondTermSheet, ModelParams, build_tree, shift_x
-from src.create_buffer_yield import TENOR_MONTHS
+# from src.create_buffer_yield import TENOR_MONTHS
 
 __all__ = [
     "TENOR_ORDER", "ISSUER_GROUPS",
@@ -44,6 +44,27 @@ __all__ = [
     "monthly_delta_raw", "carry_forward", "spread_table",
     "zero_equivalent", "load_spread_table", "delta_for_bond", "spec_fingerprint",
 ]
+
+TENOR_MONTHS = {
+    "3M": 3,
+    "6M": 6,
+    "9M": 9,
+    "1Y": 12,
+    "15M": 15,
+    "18M": 18,
+    "21M": 21,
+    "2Y": 24,
+    "27M": 27,
+    "30M": 30,
+    "33M": 33,
+    "3Y": 36,
+    "5Y": 60,
+    "7Y": 84,
+    "10Y": 120,
+    "15Y": 180,
+    "20Y": 240,
+    "30Y": 360,
+}
 
 TENOR_ORDER = list(TENOR_MONTHS) # 3M .. 30Y, 18 pillars
 ISSUER_GROUPS = ("LB_G1", "LB_G2", "LB_G3", "LB_G4", "NBFI", "FB")  # Issuer groups (TCPH), used for validation and categorisation
