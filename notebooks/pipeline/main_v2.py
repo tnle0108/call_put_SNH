@@ -44,9 +44,18 @@ BASE_CURVE = 'FI_ZYC_VND_VBMA_Bond_FI'
 # (20260819_TLXDMH_HW §2.3, "Chuẩn bị"). A reference curve not listed uses its own tenors.
 CALIBRATION_TENORS = {
     BASE_CURVE.lower(): [3/12, 6/12, 9/12, 1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0,
-                         5.0, 7.0, 10.0, 15.0, 20.0, 30.0],  # VBMA Bond FI
-    'sob4': [1/12, 2/12, 3/12, 6/12, 9/12, 1.0, 2.0, 3.0, 4.0, 5.0],  # ZC VND TK SOB
+                            # 5.0, 7.0, 10.0, 15.0, 20.0, 30.0
+
+    ],
+    'sob4': [1/12, 2/12, 3/12, 6/12, 9/12, 1.0, 2.0, 3.0, 4.0, 5.0]
 }
+
+
+# CALIBRATION_TENORS = {
+#     BASE_CURVE.lower(): [3/12, 6/12, 9/12, 1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0,
+#                          5.0, 7.0, 10.0, 15.0, 20.0, 30.0],  # VBMA Bond FI
+#     'sob4': [1/12, 2/12, 3/12, 6/12, 9/12, 1.0, 2.0, 3.0, 4.0, 5.0],  # ZC VND TK SOB
+# }
 DISC_CONVENTION = 'ACT/365'
 REF_CONVENTION  = 'ACT/365'
 
@@ -355,9 +364,9 @@ for i in ROW_SELECTION:
         print(f"{f'SHOCK_{shock}':<15} | {diff:>20.6f}")
     print("-" * 50)
 #%%
-
+value_date_str = VALUE_DATE.strftime("%Y%m%d")
 pd.DataFrame(bond_results).to_excel(
-    os.path.join(root, 'outputs', 'bond_results_tier2_oas.xlsx'),
+    os.path.join(root, 'outputs', f'{value_date_str}_bond_results_tier2_oas.xlsx'),
     index=False,
 )
 
@@ -371,3 +380,10 @@ if os.environ.get("CP_DUMP"):
         open(os.environ["CP_DUMP"], "w"), indent=1, sort_keys=True,
     )
     print(f"\n[dump] {len(bond_results)} dòng -> {os.environ['CP_DUMP']}")
+#%%
+
+    # "fi_zyc_vnd_vbma_bond_fi": {
+    #     "a": 0.3302591457703021,
+    #     "sigma": 0.018575040457465497,
+    #     "sigma_eps": 0.0036858966865396174
+    # }
