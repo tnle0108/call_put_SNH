@@ -1,6 +1,7 @@
 """Backward induction for a bond with embedded call, put, cap and floor.
 
-Follows ``MultiCurveHWTree.price`` / ``.decompose`` but adds the one thing a
+Follows the earlier engine's ``MultiCurveHWTree.price`` / ``.decompose`` (removed; see git
+history) but adds the one thing a
 recombining tree cannot express on its own: a coupon whose rate was set at an
 earlier node.  A bond resetting every 12 months and paying every 6 months fixes
 one rate that governs several payments, and by the time the rollback reaches a
@@ -55,21 +56,10 @@ class CallPutTree:
         ref_leg: CurveLeg | None = None,
         rho: float = 0.0,
         n_sigma: float = 6.0,
-        n_fix: int | None = None,
     ) -> None:
         self.bond = bond
         self.disc = disc_leg
         self.ref = disc_leg if ref_leg is None else ref_leg
-        if n_fix is not None and n_fix < 5:
-            # Two or three labels cannot resolve the kinks the exercise tests put
-            # into the value's dependence on the fixed rate, and the result is
-            # quietly wrong rather than merely coarse.  21 labels measured around
-            # a basis point of face; below that, use the exact grid.
-            raise ValueError(
-                f"n_fix={n_fix} is too coarse to interpolate the fixing axis; "
-                f"pass at least 5, or None for the exact grid"
-            )
-        self.n_fix = n_fix
 
         legs = [disc_leg] if ref_leg is None else [disc_leg, ref_leg]
         self.lat = Lattice(legs, bond.days, rho=rho, n_sigma=n_sigma)
@@ -81,7 +71,6 @@ class CallPutTree:
         self.phi = np.empty(bond.n_steps)
         self.phi_ref = self.phi
         self.step_discount: list[np.ndarray] = []
-        self.ref_discount: list[np.ndarray] = []
         self._fit_to_curve()
 
     def _fit_leg(
@@ -94,6 +83,10 @@ class CallPutTree:
             phi_i  = ln( sum_j Q_i(j) exp(-B(dt_i) x_j) / P(0, t_{i+1}) ) / dt_i
 
         Trả về ``(phi, step_discount)`` với ``step_discount[i][j] = exp(-R_i(j) dt_i)``.
+
+        Hệ số ``B(dt)/dt`` (≈ ``1 - a dt / 2``) là cố ý: dùng ``r = x + phi`` cũng
+        reprice đúng đường cong nhưng để lại sai lệch O(a dt) trong phần quyền chọn
+        (đo trên một callable 10 năm: call bị thổi lên 1,1 bp mệnh giá ở bước 21 ngày).
         """
         days = self.bond.days
         n_steps = self.bond.n_steps
@@ -128,63 +121,11 @@ class CallPutTree:
         if self.ref is self.disc:
             # Một đường cong duy nhất: dùng lại, khỏi tính hai lần.
             self.phi_ref = self.phi
-            self.ref_discount = self.step_discount
         else:
-            self.phi_ref, self.ref_discount = self._fit_leg(
+            self.phi_ref, _ = self._fit_leg(
                 self.ref, self.lat.factors[-1]
             )
-            
-    # def _fit_to_curve(self) -> None:
-    #     """Solve ``phi(t)`` by forward induction so the lattice reprices the curve.
-
-    #     The node rate over step ``i`` is the **step-length rate**, not an
-    #     instantaneous short rate::
-
-    #         R_i(j) = [B(dt_i) / dt_i] * x_j + phi_i
-
-    #     The ``B(dt)/dt`` coefficient matters because ``dt`` is not small: it is
-    #     ``1 - a dt / 2`` to first order, 0.9948 at a 21-day step and 0.9776 at a
-    #     quarterly one.  Using ``r = x + phi`` instead leaves an O(a dt) bias in how
-    #     the one-step discount responds to ``x``.  The curve fit hides it -- both
-    #     forms reprice the curve exactly -- so it surfaces only in the optionality:
-    #     measured on a 10-year callable, it overstates the call by 1.1 bp of face at
-    #     a 21-day step and 4.6 bp at a quarterly one.
-
-    #     ``phi_i`` is the only unknown and it is common to every node of the step, so
-    #     the Arrow-Debreu condition solves it in closed form::
-
-    #         sum_j Q_i(j) * exp(-R_i(j) * dt_i) = P(0, t_{i+1})
-
-    #         phi_i = ln( sum_j Q_i(j) exp(-B(dt_i) x_j) / P(0, t_{i+1}) ) / dt_i
-
-    #     with ``Q`` the Arrow-Debreu prices carried forward, ``Q_0 = 1``.  Nothing is
-    #     taken from the continuous-time model: no ``A(t,T)``, no convexity term.  An
-    #     earlier version seeded ``A`` analytically and corrected it by a scalar per
-    #     step; the seed cancels identically between the numerator and denominator of
-    #     that scalar, so this is the same tree with the redundant term removed
-    #     (verified: 1.1e-15 per node, prices equal to 1e-12 bp).
-
-    #     Only the discount factor is involved, so the induction runs on the first
-    #     factor alone; the correlation matrices have zero row and column sums, so a
-    #     two-factor joint reproduces that factor's marginal exactly.
-    #     """
-    #     factor = self.lat.factors[0]
-    #     days = self.bond.days
-    #     weights = np.ones(1)
-    #     for i in range(self.bond.n_steps):
-    #         dt = (int(days[i + 1]) - int(days[i])) / self.disc.denom
-    #         raw = np.exp(-hw_B(self.disc.a, dt) * factor.x[i])
-    #         target = self.disc.discount(int(days[i + 1]))
-    #         self.phi[i] = np.log(float((weights * raw).sum()) / target) / dt
-    #         step = np.exp(-self.phi[i] * dt) * raw
-    #         self.step_discount.append(step)
-    #         flow = weights * step
-    #         nxt = np.zeros(int(factor.n[i + 1]))
-    #         for branch in range(3):
-    #             np.add.at(
-    #                 nxt, factor.child[i][:, branch], flow * factor.prob[i][:, branch]
-    #             )
-    #         weights = nxt
+        
 
     # -- constructors -------------------------------------------------------
     @classmethod
@@ -214,16 +155,13 @@ class CallPutTree:
         ref_leg: CurveLeg,
         rho: float,
         n_sigma: float = 6.0,
-        n_fix: int | None = None,
     ) -> "CallPutTree":
         """Two factors: discounting and the coupon index, correlated by ``rho``.
 
         Fixed and floating periods may be mixed -- a bond fixed for two years then
         floating runs on the plain two-dimensional array until the first reset.
         """
-        return cls(
-            bond, disc_leg, ref_leg=ref_leg, rho=rho, n_sigma=n_sigma, n_fix=n_fix
-        )
+        return cls(bond, disc_leg, ref_leg=ref_leg, rho=rho, n_sigma=n_sigma)
 
     # -- pricing ------------------------------------------------------------
     def price(self, flags: PricingFlags | None = None) -> float:
@@ -233,8 +171,6 @@ class CallPutTree:
         n = bond.maturity_step
 
         value = np.full(self.lat.shape(n), bond.face, dtype=float)
-        # group: FixingGroup | None = None
-        # f_idx = f_vals = None
         active: list[tuple[FixingGroup, np.ndarray, np.ndarray]] = []
 
         for i in range(n, -1, -1):
@@ -247,21 +183,12 @@ class CallPutTree:
                     del active[k]
                     break
 
-            # if group is not None and i == group.fix_step:
-            #     value = self._collapse(value, group, f_idx)
-            #     group = f_idx = f_vals = None
-
             opening = bond.expand_at.get(i)
             if opening is not None:
-                # if group is not None:  # pragma: no cover - compile_bond forbids it
-                #     raise AssertionError("nested fixing groups")
-                # group = opening
                 f_idx, f_vals = self._fixing_grid(opening)
                 value = np.repeat(value[np.newaxis], f_vals.size, axis=0)
                 active.insert(0, (opening, f_idx, f_vals))
 
-            # value = self._exercise(value, i, group, f_vals, flags)
-            # cash = self._coupons(i, group, f_vals, flags)
             value = self._exercise(value, i, active, flags)
             cash = self._coupons(i, active, flags)
             if cash is not None:
@@ -301,53 +228,18 @@ class CallPutTree:
 
     # -- fixing axis --------------------------------------------------------
     def _fixing_grid(self, group: FixingGroup) -> tuple[np.ndarray, np.ndarray]:
-        """Levels of the fixing factor to carry as labels through this group."""
-        size = int(self.fix_factor.n[group.fix_step])
-        if self.n_fix is None or self.n_fix >= size:
-            idx = np.arange(size)
-        else:
-            idx = np.unique(
-                np.rint(np.linspace(0, size - 1, self.n_fix)).astype(int)
-            )
+        """Levels of the fixing factor to carry as labels through this group: every node."""
+        idx = np.arange(int(self.fix_factor.n[group.fix_step]))
         return idx, self.fix_factor.x[group.fix_step][idx]
 
-    def _collapse(
-        self, value: np.ndarray, group: FixingGroup, f_idx: np.ndarray
-    ) -> np.ndarray:
-        """Drop the fixing axis: at the fixing date the label is the node's level.
+    def _collapse_at(self, value:np.ndarray, group: FixingGroup, f_idx:np.ndarray, axis: int) -> np.ndarray:
+        """Drop the fixing axis ``axis``: at the fixing date the label is the node's level.
 
-        ``out[..., m] = value[f(m), ..., m]`` -- only the diagonal survives.  The
+        ``out[..., m] = value[..., f(m), ..., m]`` -- only the diagonal survives.  The
         off-diagonal entries were never wasted: at the payment dates in between, a
         node is reachable from several fixing levels and every one of those
         answers had to be available.
         """
-        size = int(self.fix_factor.n[group.fix_step])
-        if value.shape[-1] != size:  # pragma: no cover - defensive
-            raise AssertionError(
-                f"fixing factor has {size} levels at step {group.fix_step} but the "
-                f"value array's last axis is {value.shape[-1]}; np.diagonal would "
-                f"truncate this silently"
-            )
-        if f_idx.size == size:
-            return np.ascontiguousarray(np.diagonal(value, axis1=0, axis2=-1))
-
-        # Coarse label grid: interpolate back onto every level.  Between two
-        # exercise dates the value is linear in the fixed rate and each min/max
-        # adds a single kink, so linear interpolation is well inside the tree's
-        # own discretisation error.
-        pos = np.interp(
-            np.arange(size, dtype=float),
-            f_idx.astype(float),
-            np.arange(f_idx.size, dtype=float),
-        )
-        lo = np.floor(pos).astype(int)
-        hi = np.minimum(lo + 1, f_idx.size - 1)
-        weight = pos - lo
-        low = np.diagonal(value[lo], axis1=0, axis2=-1)
-        high = np.diagonal(value[hi], axis1=0, axis2=-1)
-        return (1.0 - weight) * low + weight * high
-
-    def _collapse_at(self, value:np.ndarray, group: FixingGroup, f_idx:np.ndarray, axis: int) -> np.ndarray:
         size = int(self.fix_factor.n[group.fix_step])
         if value.shape[-1] != size:
             raise AssertionError(
@@ -356,23 +248,12 @@ class CallPutTree:
                 f"truncate this silently"
             )
 
-        if f_idx.size == size:
-            return np.ascontiguousarray(np.diagonal(value, axis1=axis, axis2=-1))
-
-        pos = np.interp(
-            np.arange(size, dtype=float),
-            f_idx.astype(float),
-            np.arange(f_idx.size, dtype=float),
-        )
-
-        lo = np.floor(pos).astype(int)
-        hi = np.minimum(lo + 1, f_idx.size -1)
-        weight = pos - lo
-        v_lo = np.take(value, lo, axis = axis)
-        v_hi = np.take(value, hi, axis = axis)
-        low = np.diagonal(v_lo, axis1=axis, axis2=-1)
-        high = np.diagonal(v_hi, axis1=axis, axis2=-1)
-        return (1 - weight) * low + weight * high
+        if f_idx.size != size:  # pragma: no cover - defensive
+            raise AssertionError(
+                f"fixing axis carries {f_idx.size} labels but the factor has {size} "
+                f"levels at step {group.fix_step}; every level must be a label"
+            )
+        return np.ascontiguousarray(np.diagonal(value, axis1=axis, axis2=-1))
     # -- cash and exercise --------------------------------------------------
     def _index_rate(
         self, fix_step: int, period: Period, z_vals: np.ndarray, flags: PricingFlags
@@ -396,7 +277,7 @@ class CallPutTree:
             a_coef_dt, b_coef_dt = self.ref.affine_zcb(start, int(self.bond.days[fix_step+1]))
             R_dt = hw_B(self.ref.a, dt) / dt * self.lat.factors[-1].x[fix_step] + self.phi_ref[fix_step]
 
-            a_coef, b_coef = self.ref.affine_zcb(start, start + src.ref_tenor_years)
+            a_coef, b_coef = self.ref.affine_zcb(start, start + src.ref_tenor_days)
 
             z_vals_fitted = ((R_dt*dt)+ np.log(a_coef_dt))/b_coef_dt
             # bond_price = a_coef * np.exp(-b_coef * z_vals)
@@ -412,8 +293,6 @@ class CallPutTree:
         self,
         period: Period,
         i: int,
-        # group: FixingGroup | None,
-        # f_vals: np.ndarray | None,
         active,
         flags: PricingFlags,
     ):
@@ -429,15 +308,6 @@ class CallPutTree:
 
         if period.fix_step is None:
             return float(period.src.fixed_rate)
-
-        # deferred = (
-        #     group is not None
-        #     and period.is_deferred
-        #     and period.fix_step == group.fix_step
-        # )
-        # if deferred:
-        #     rate = self._index_rate(period.fix_step, period, f_vals, flags)
-        #     return rate.reshape((-1,) + (1,) * self.lat.n_factors)
 
         if period.fix_step > i:
             raise ValueError(
@@ -463,8 +333,6 @@ class CallPutTree:
     def _accrued(
         self,
         i: int,
-        # group: FixingGroup | None,
-        # f_vals: np.ndarray | None,
         active,
         flags: PricingFlags,
     ):
@@ -486,8 +354,6 @@ class CallPutTree:
         self,
         value: np.ndarray,
         i: int,
-        # group: FixingGroup | None,
-        # f_vals: np.ndarray | None,
         active,
         flags: PricingFlags,
     ) -> np.ndarray:
@@ -506,8 +372,6 @@ class CallPutTree:
     def _coupons(
         self,
         i: int,
-        # group: FixingGroup | None,
-        # f_vals: np.ndarray | None,
         active,
         flags: PricingFlags,
     ):

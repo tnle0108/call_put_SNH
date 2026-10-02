@@ -1,28 +1,30 @@
-"""Spread rủi ro cho trái phiếu tăng vốn (Tier 2).
+"""
+Risk spread for capital-raising (Tier 2) bonds.
 
-Phương pháp luận: ``Phuong_phap_luan_spread_trai_phieu_tang_von.html``.
+Methodology: ``Phuong_phap_luan_spread_trai_phieu_tang_von.html``.
 
-Tóm tắt cơ chế — **đây là chỗ dễ hiểu nhầm nhất của cả module**::
+Mechanism summary — **this is the easiest part of the whole module to misread**::
 
     R_T2(t,T)  =  R_G(t,T)  +  delta · B_a(tau)/tau
 
-``delta`` là lượng dịch **biến trạng thái x(t)** của cây Hull-White, KHÔNG phải
-một spread cộng thẳng vào lãi suất zero.  Vì hệ số truyền của ``x`` sang lãi suất
-kỳ hạn là ``B_a(tau)/tau`` — bằng 1 ở đầu ngắn, tiến về ``1/(a·tau)`` ở đầu dài —
-phần bù trên đường cong **suy giảm theo kỳ hạn**.  Với ``delta = 143 bp`` và
-``a = 0,1827``: 1,40% ở 3M nhưng chỉ 0,26% ở 30Y.
+``delta`` is a shift of the Hull-White tree's **state variable x(t)**, NOT a spread added directly
+to the zero rate. Because the pass-through of ``x`` to the term rate is ``B_a(tau)/tau`` — equal to
+1 at the short end and tending to ``1/(a·tau)`` at the long end — the premium on the curve
+**decays with tenor**. With ``delta = 143 bp`` and ``a = 0.1827``: 1.40% at 3M but only 0.26% at
+30Y.
 
-Hệ quả thực tế: ai đọc ``0.0143`` trong ``tier2_spread_monthly.csv`` rồi cộng
-thẳng vào đường zero sẽ sai vài chục bp ở đầu dài mà **không có lỗi nào báo**.
-File phái sinh ``tier2_spread_zero_equivalent.csv`` tồn tại chính để tránh việc đó.
+Practical consequence: anyone who reads ``0.0143`` in ``tier2_spread_monthly.csv`` and adds it
+straight onto the zero curve will be off by tens of bp at the long end, with **no error raised**.
+The derived file ``tier2_spread_zero_equivalent.csv`` exists precisely to prevent that.
 
-Giá quan sát là giá **dirty** (``abs(dirty_amount)`` là số tiền thanh toán) và
-``tree.price()`` trả PV dirty, nên **không có điều chỉnh lãi dự thu ở bất kỳ đâu**.
+Observed prices are **dirty** (``abs(dirty_amount)`` is the settlement amount) and
+``tree.price()`` returns a dirty PV, so **there is no accrued-interest adjustment anywhere**.
 """
 from __future__ import annotations
 
 import hashlib
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -40,27 +42,37 @@ __all__ = [
     "CalibResult", "calibrate_delta", "calibrate_all", "load_cache",
     "CACHE_COLUMNS", "build_tier2_spread_table",
     "monthly_delta_raw", "carry_forward", "spread_table",
-    "zero_equivalent", "load_spread_table", "delta_for_bond",
+    "zero_equivalent", "load_spread_table", "delta_for_bond", "spec_fingerprint",
 ]
 
-TENOR_ORDER = list(TENOR_MONTHS)            # 3M .. 30Y, 18 pillar
-ISSUER_GROUPS = ("LB_G1", "LB_G2", "LB_G3", "LB_G4", "NBFI", "FB")  # nhóm tổ chức phát hành trái phiếu, dùng để phân đường cong chiết khấu
+TENOR_ORDER = list(TENOR_MONTHS) # 3M .. 30Y, 18 pillars
+ISSUER_GROUPS = ("LB_G1", "LB_G2", "LB_G3", "LB_G4", "NBFI", "FB")  # Issuer groups (TCPH), used for validation and categorisation
 
-PRICE_MIN, PRICE_MAX = 20.0, 200.0   # % mệnh giá; chỉ để bắt sai đơn vị
+PRICE_MIN, PRICE_MAX = 20.0, 200.0   # % of par; only meant to catch unit errors
 
-_TRUE = {"y", "yes", "true", "1", "tier2", "t"}
-_FALSE = {"n", "no", "false", "0", "normal", "f", "", "nan", "none"}
+_TRUE = {"y", "yes", "true", "1", "tier2", "t"} # strings read as True for the Tier 2 flag
+_FALSE = {"n", "no", "false", "0", "normal", "f", "", "nan", "none"} # strings read as False for the Tier 2 flag
 
 
 # ---------------------------------------------------------------------------
-# Đọc dữ liệu
+# Data loading
 # ---------------------------------------------------------------------------
 def parse_amount(x) -> float:
-    """``"300,000,000,000"`` -> ``3e11``.  Chịu được dấu âm và khoảng trắng.
+    """
+    Parse an amount string such as ``"300,000,000,000"`` into a float (``3e11``).
 
-    Không dùng ``pd.read_csv(thousands=",")``: nó áp theo cột và **im lặng** để
-    nguyên cột dưới dạng ``object`` nếu một ô hỏng, khiến ``float()`` nổ ở chỗ
-    cách xa nguyên nhân.
+    Tolerates a minus sign and whitespace. ``pd.read_csv(thousands=",")`` is deliberately not used:
+    it applies per column and **silently** leaves the whole column as ``object`` if a single cell is
+    malformed, so ``float()`` then blows up far away from the cause.
+
+    Args:
+        x: The value to parse (number, string, None or NaN).
+
+    Returns:
+        float: The parsed amount, or NaN for None/NaN/empty/"nan"/"none".
+
+    Raises:
+        ValueError: If the string cannot be read as a number.
     """
     if x is None or (isinstance(x, float) and np.isnan(x)):
         return float("nan")
@@ -76,17 +88,27 @@ def parse_amount(x) -> float:
 
 
 def parse_tier2_flag(x) -> bool:
-    """Cờ tăng vốn, **nghiêm ngặt**.
+    """
+    Parse a value to determine if it indicates a Tier 2 bond.
 
-    Token lạ thì raise chứ không mặc định ``False``: mặc định âm thầm chính là
-    lỗi mà cả thay đổi này sinh ra để loại bỏ — một trái phiếu tăng vốn bị định
-    giá trên đường cong thường mà không ai biết.
+    Args:
+        x: The input value to parse. It can be of type bool, None, float, or str.
+
+    Returns:
+        bool:
+            - True if the input indicates a Tier 2 bond (e.g., 'Y', 'yes', 'true', '1', 'tier2',
+              't').
+            - False if the input indicates a non-Tier 2 bond (e.g., 'N', 'no', 'false', '0',
+              'normal', 'f', '', 'nan', 'none').
+
+    Raises:
+        ValueError: If the input value cannot be interpreted as a Tier 2 flag.
     """
     if isinstance(x, (bool, np.bool_)):
-        return bool(x)
+        return bool(x) # Coerce to Python bool if input is a boolean type
     if x is None or (isinstance(x, float) and np.isnan(x)):
-        return False
-    s = str(x).strip().lower()
+        return False # Treat None or NaN as False
+    s = str(x).strip().lower() # Convert to string, strip whitespace, and lowercase for comparison
     if s in _TRUE:
         return True
     if s in _FALSE:
@@ -97,12 +119,25 @@ def parse_tier2_flag(x) -> bool:
 
 
 def observed_dirty_price(dirty_amount, par_value, face) -> float:
-    """Giá dirty trên ``face`` đơn vị mệnh giá.
+    """
+    Compute the dirty price per ``face`` units of par.
 
-    Dấu của ``dirty_amount`` là chiều vị thế (dương = tự phát hành, âm = mua của
-    tổ chức khác), **không mang thông tin giá** — nên lấy trị tuyệt đối cả hai.
+    The sign of ``dirty_amount`` is the position direction (positive = own issuance, negative =
+    bought from another institution) and **carries no price information** — so the absolute value
+    of both amounts is taken.
 
-    Tỷ lệ bằng đúng 1 là kết quả hợp lệ, không phải dấu hiệu thiếu dữ liệu.
+    A ratio of exactly 1 is a valid result, not a sign of missing data.
+
+    Args:
+        dirty_amount: Settlement amount including accrued interest (sign ignored).
+        par_value: Par amount of the same observation (sign ignored).
+        face: Face value the price is quoted on (e.g. 100).
+
+    Returns:
+        float: ``abs(dirty_amount) / abs(par_value) * face``.
+
+    Raises:
+        ValueError: If ``par_value`` is missing/zero or ``dirty_amount`` is not finite.
     """
     p, n = parse_amount(dirty_amount), parse_amount(par_value)
     if not np.isfinite(n) or n == 0:
@@ -113,24 +148,35 @@ def observed_dirty_price(dirty_amount, par_value, face) -> float:
 
 
 def validate_term_sheet(bond_df: pd.DataFrame) -> None:
-    """Kiểm **lược đồ** term sheet. Luôn gọi được, kể cả khi chưa có giá thật.
-
-    Tách khỏi :func:`validate_price_data` có chủ đích: thiếu giá giao dịch chỉ
-    chặn bước hiệu chỉnh spread, không được chặn việc định giá trái phiếu thường.
     """
-    stale = bond_df[bond_df["group"].astype(str).str.strip() == "Tier2"]
+    Validate the **schema** of the term sheet DataFrame for Tier 2 bonds.
+
+    Always callable, even before any real prices exist. Deliberately kept separate from
+    :func:`validate_price_data`: missing trade prices only block the spread calibration step and
+    must not block pricing of ordinary bonds.
+
+    Args:
+        bond_df (pd.DataFrame): The term sheet, with ``group``, ``bond_id`` and ``is_tier2``
+            columns.
+
+    Raises:
+        ValueError: If a row still has the legacy ``group='Tier2'``, a ``group`` is not in
+            ``ISSUER_GROUPS``, the ``is_tier2`` column is missing, or an ``is_tier2`` value
+            cannot be parsed.
+    """
+    stale = bond_df[bond_df["group"].astype(str).str.strip() == "Tier2"] # Strip whitespace from 'group' column before comparison
     if len(stale):
         raise ValueError(
             f"{len(stale)} dòng vẫn ghi group='Tier2'. Cột 'group' nay là phân "
             f"nhóm TCPH (LB_G1/LB_G2/LB_G3); dùng cột 'is_tier2' để đánh dấu "
             f"trái phiếu tăng vốn.\n  " + ", ".join(stale["bond_id"].astype(str)[:6])
-        )
-    bad = sorted(set(bond_df["group"].astype(str).str.strip()) - set(ISSUER_GROUPS))
+        ) # Check for any rows with 'group' column set to 'Tier2' and raise an error if found
+    bad = sorted(set(bond_df["group"].astype(str).str.strip()) - set(ISSUER_GROUPS)) # Strip whitespace from 'group' column and check for any values not in ISSUER_GROUPS
     if bad:
-        raise ValueError(f"group ngoài {ISSUER_GROUPS}: {bad}")
+        raise ValueError(f"group ngoài {ISSUER_GROUPS}: {bad}") # Raise an error if any values in 'group' column are not in ISSUER_GROUPS
     if "is_tier2" not in bond_df.columns:
-        raise ValueError("thiếu cột 'is_tier2' trong bond placeholder.csv")
-    bond_df["is_tier2"].map(parse_tier2_flag)      # nổ sớm nếu có token lạ
+        raise ValueError("thiếu cột 'is_tier2' trong term_sheet.csv") # Raise an error if 'is_tier2' column is missing from the DataFrame
+    bond_df["is_tier2"].map(parse_tier2_flag) # Check that 'is_tier2' column can be parsed as boolean values using parse_tier2_flag function
 
 
 PRICE_OBS_COLUMNS = ("bond_id", "obs_date", "dirty_amount", "par_value",
@@ -139,36 +185,48 @@ PRICE_OBS_COLUMNS = ("bond_id", "obs_date", "dirty_amount", "par_value",
 
 def load_price_obs(path, bond_df: pd.DataFrame, *,
                    expect_tier2: bool = True) -> pd.DataFrame:
-    """Đọc file quan sát giá dạng dài (``*_price_obs.csv``).
+    """
+    Load a long-format price observation file (``*_price_obs.csv``).
 
-    Một dòng = một trái phiếu tại một ngày.  Đây là **nguồn duy nhất** cho bước
-    hiệu chỉnh; term sheet chỉ còn giữ ``is_tier2`` để định giá tại kỳ báo cáo.
+    One row = one bond on one date. This is the **only source** for the calibration step; the term
+    sheet only keeps ``is_tier2`` for pricing at the reporting date.
 
-    ``expect_tier2`` chọn pool: ``True`` cho ``tier2_price_obs.csv`` (chỉ nhận mã
-    tăng vốn), ``False`` cho ``nontier2_price_obs.csv`` (chỉ nhận mã thường).  Hai
-    pool phải tách bạch vì chúng đo hai đại lượng khác nhau — lẫn một mã sang pool
-    kia là hỏng cả hai số mà không có lỗi nào báo.
+    ``expect_tier2`` selects the pool: ``True`` for ``tier2_price_obs.csv`` (accepts only
+    capital-raising bonds), ``False`` for ``nontier2_price_obs.csv`` (accepts only ordinary bonds).
+    The two pools must be kept apart because they measure two different quantities — letting one
+    bond slip into the other pool corrupts both numbers with no error raised.
 
-    Dạng dài là bắt buộc chứ không phải cho gọn: hiệu chỉnh chạy trên lịch sử
-    nhiều tháng, mà mỗi ngày quan sát rơi vào một kỳ coupon khác nhau và một
-    khối lượng khác nhau.  Một cột trong term sheet chỉ chở được **một** ngày.
+    The long format is required, not merely tidier: calibration runs over a multi-month history,
+    and each observation date falls in a different coupon period with a different volume. A single
+    term-sheet column can carry only **one** date.
 
-    Cột:
+    Columns:
 
     ``dirty_amount``
-        Số tiền thanh toán, đã gồm lãi dự thu.  Dấu là chiều vị thế và bị bỏ
-        qua.  Bằng đúng ``par_value`` là hợp lệ — giá dirty 100% mệnh giá xảy ra
-        thật, nên ở đây **không** có phép kiểm nào coi tỷ lệ 100,0 là dấu hiệu
-        dữ liệu chưa nạp.
+        Settlement amount, including accrued interest. The sign is the position direction and is
+        ignored. Being exactly equal to ``par_value`` is valid — a dirty price of 100% of par does
+        happen, so there is **no** check here that treats a ratio of 100.0 as a sign of data not
+        yet loaded.
     ``par_value``
-        Mệnh giá của chính quan sát đó.  Cũng là trọng số bình quân theo rổ kỳ
-        hạn, nên phải là khối lượng của giao dịch chứ không phải dư nợ cả mã.
+        Par amount of that observation itself. It is also the weight in the tenor-bucket average,
+        so it must be the trade volume, not the outstanding amount of the whole bond.
     ``coupon_rate``
-        Lãi suất kỳ coupon hiện hành tại ``obs_date``, dạng thập phân (0,0655).
-        Để trống thì suy từ đường tham chiếu như hiện nay.
+        Current coupon-period rate at ``obs_date``, as a decimal (0.0655). Leave blank to infer it
+        from the reference curve as today.
 
-    Trả về khung đã nối ``face`` và ``group`` từ term sheet, thêm cột
-    ``dirty_price`` quy về 100 mệnh giá.
+    Args:
+        path: Path to the observation CSV.
+        bond_df (pd.DataFrame): Term sheet providing ``face``, ``group`` and ``is_tier2``.
+        expect_tier2 (bool): Which pool the file belongs to (see above).
+
+    Returns:
+        pd.DataFrame: Observations joined with ``face`` and ``group`` from the term sheet, plus a
+        ``dirty_price`` column per 100 of par, sorted by ``obs_date`` and ``bond_id``.
+
+    Raises:
+        ValueError: On missing columns, unknown ``bond_id``, a bond in the wrong pool, duplicate
+            ``(bond_id, obs_date)``, a dirty price outside ``[PRICE_MIN, PRICE_MAX]``, or a
+            ``coupon_rate`` given in percent.
     """
     obs = pd.read_csv(path, dtype=str).dropna(how="all")
     missing = [c for c in PRICE_OBS_COLUMNS if c not in obs.columns]
@@ -228,22 +286,35 @@ def load_price_obs(path, bond_df: pd.DataFrame, *,
 
 
 def common_start(obs_base: pd.DataFrame, obs_layer: pd.DataFrame, value_date):
-    """Mốc ``T1`` để hai bảng cùng bắt đầu, tính lùi từ ngày định giá.
+    """
+    Find the start date ``T1`` so both tables begin together, counting back from the value date.
 
     .. code-block:: text
 
-        d_layer = max{ obs_date của tầng CHỒNG, <= value_date }
-        T1      = max{ obs_date của tầng NỀN,   <= d_layer    }
+        d_layer = max{ obs_date of the OVERLAY layer, <= value_date }
+        T1      = max{ obs_date of the BASE layer,    <= d_layer    }
 
-    Ở đây tầng nền là trái phiếu không tăng vốn có quyền chọn (sinh ra OAS), tầng
-    chồng là trái phiếu tăng vốn có quyền chọn (sinh ra delta).
+    Here the base layer is non-capital-raising bonds with options (producing the OAS) and the
+    overlay layer is capital-raising bonds with options (producing delta).
 
-    ``T1`` là **lần gần nhất mà cả hai tầng đều có quan sát tươi**.  Ràng buộc
-    ``T1 <= d_layer`` tránh mở bảng ở một tháng chỉ có nền mới trong khi tầng
-    chồng phải bê từ tháng cũ — ghép một tầng tươi với một tầng ôi.
+    ``T1`` is **the most recent date on which both layers have fresh observations**. The constraint
+    ``T1 <= d_layer`` avoids opening the table in a month where only the base is new while the
+    overlay has to be carried from an old month — pairing a fresh layer with a stale one.
 
-    ``value_date`` là tham số động: đổi kỳ báo cáo hoặc nạp thêm quan sát thì
-    ``T1`` đổi theo.  Không được ghi cứng ngày nào vào code.
+    ``value_date`` is a dynamic parameter: changing the reporting period or loading more
+    observations moves ``T1`` accordingly. No date may be hard-coded.
+
+    Args:
+        obs_base (pd.DataFrame): Base-layer observations (``obs_date`` column).
+        obs_layer (pd.DataFrame): Overlay-layer observations (``obs_date`` column).
+        value_date: The valuation date.
+
+    Returns:
+        pd.Timestamp: The common start date ``T1``.
+
+    Raises:
+        ValueError: If the overlay has no observation up to ``value_date``, or the base has none up
+            to the overlay's latest date.
     """
     vd = pd.Timestamp(value_date)
     d_base = pd.to_datetime(obs_base["obs_date"])
@@ -267,24 +338,45 @@ def common_start(obs_base: pd.DataFrame, obs_layer: pd.DataFrame, value_date):
 
 
 # ---------------------------------------------------------------------------
-# Đường cong Tier 2 và rổ kỳ hạn
+# Tier 2 curve and tenor buckets
 # ---------------------------------------------------------------------------
-def tier2_curve(group_curve, delta: float, a: float, *, n_dense: int = 1500):
-    """Đường chiết khấu của trái phiếu tăng vốn = đường nhóm với ``x`` dịch ``delta``.
+def tier2_curve(group_curve, delta: float, a: float):
+    """
+    Build the capital-raising bond discount curve = the group curve with ``x`` shifted by ``delta``.
 
-    Chỉ là tên gọi theo nghiệp vụ của :func:`src.bond_pricer.shift_x`; một hiện
-    thực duy nhất, không nhân bản.
+    This is only the business name for :func:`src.bond_pricer.shift_x`; there is a single
+    implementation, not a duplicate.
+
+    Args:
+        group_curve: The issuer-group discount curve (LSCK).
+        delta (float): Shift of the state variable ``x(t)``.
+        a (float): Hull-White mean reversion.
+
+    Returns:
+        The shifted discount curve, as returned by ``shift_x``.
     """
     return shift_x(group_curve, a, delta, refine=True)
 
 
 def remaining_tenor_bucket(obs_date, maturity_date) -> str:
-    """Kỳ hạn còn lại, snap về pillar gần nhất trong 18 pillar chuẩn.
+    """
+    Return the remaining tenor, snapped to the nearest of the 18 standard pillars.
 
-    Kẹp biên thay vì raise, và lấy pillar **gần nhất** chứ không làm tròn lên —
-    làm tròn lên đẩy một trái phiếu còn 8,3 năm vào hẳn rổ 10Y.
+    Clamps at the edges instead of raising, and takes the **nearest** pillar rather than rounding
+    up — rounding up would push a bond with 8.3 years left all the way into the 10Y bucket.
 
-    Hoà thì lấy pillar **ngắn hơn**, nhất quán với bước vá 1 (vốn ưu tiên rổ ngắn).
+    Ties go to the **shorter** pillar, consistent with patch step 1 (which favours the shorter
+    bucket).
+
+    Args:
+        obs_date: The observation date.
+        maturity_date: The bond maturity date.
+
+    Returns:
+        str: The tenor pillar label (e.g. ``"7Y"``).
+
+    Raises:
+        ValueError: If maturity is not after the observation date.
     """
     obs = pd.Timestamp(obs_date)
     mat = pd.Timestamp(maturity_date)
@@ -293,17 +385,34 @@ def remaining_tenor_bucket(obs_date, maturity_date) -> str:
     best, best_key = None, None
     for tenor, months in TENOR_MONTHS.items():
         dist = abs((obs + pd.DateOffset(months=months) - mat).days)
-        key = (dist, months)          # hoà -> months nhỏ hơn thắng
+        key = (dist, months)          # tie -> smaller months wins
         if best_key is None or key < best_key:
             best, best_key = tenor, key
     return best
 
 
 # ---------------------------------------------------------------------------
-# Hiệu chỉnh delta từ một quan sát
+# Calibrating delta from a single observation
 # ---------------------------------------------------------------------------
 @dataclass
 class CalibResult:
+    """
+    Result of calibrating ``delta`` for one (bond, observation date).
+
+    Attributes:
+        bond_id (str): Bond identifier.
+        obs_date (pd.Timestamp): Observation date.
+        group (str): Issuer group (TCPH).
+        tenor_bucket (str): Remaining-tenor pillar at ``obs_date``.
+        par_value (float): Par amount of the observation (the averaging weight).
+        obs_dirty_price (float): Observed dirty price per 100 of par.
+        delta (float | None): Calibrated shift of ``x(t)``; None if calibration failed.
+        status (str): ``"ok"``, ``"unbracketed"``, ``"before_curve_history"``,
+            ``"no_future_coupon"`` or ``"error"``.
+        n_eval (int): Number of tree pricings performed.
+        resid_price (float | None): Price residual at the solution.
+        message (str): Diagnostic message on failure.
+    """
     bond_id: str
     obs_date: pd.Timestamp
     group: str
@@ -317,6 +426,12 @@ class CalibResult:
     message: str = ""
 
     def as_row(self) -> dict:
+        """
+        Convert the result to a flat dict row for the cache table.
+
+        Returns:
+            dict: The dataclass fields, with ``obs_date`` as an ISO ``YYYY-MM-DD`` string.
+        """
         d = asdict(self)
         d["obs_date"] = pd.Timestamp(self.obs_date).date().isoformat()
         return d
@@ -327,21 +442,39 @@ def calibrate_delta(spec: BondTermSheet, obs_date, obs_dirty_price, *,
                     base_delta: float = 0.0,
                     lo=-0.02, hi=0.05, xtol=1e-7, max_expand=4,
                     option_anchor=None, **tree_kw) -> CalibResult:
-    """Dò ``delta`` sao cho cây tái tạo đúng giá dirty quan sát được.
+    """
+    Solve for ``delta`` so that the tree reproduces the observed dirty price.
 
-    Bật **đầy đủ** call/put/cap/floor — đây là OAS, không phải spread trên trái
-    phiếu straight.  Không gọi ``decompose()`` trong vòng lặp: nó tốn 6 lần định
-    giá mỗi bước.
+    Call/put/cap/floor are **fully** enabled — this is an OAS, not a spread on a straight bond.
+    ``decompose()`` is not called inside the loop: it costs 6 pricings per step.
 
-    ``f(delta)`` giảm ngặt (phần bù dương ở mọi kỳ hạn khi ``delta > 0``), nên
-    bracket nới cơ học rồi khẳng định đổi dấu — bước khẳng định đó đồng thời là
-    phép thử đơn điệu.
+    ``f(delta)`` is strictly decreasing (the premium is positive at every tenor when
+    ``delta > 0``), so the bracket is widened mechanically and a sign change is then asserted —
+    that assertion doubles as the monotonicity test.
 
-    ``base_delta`` là **nền** mà ``delta`` chồng lên: cây dùng
-    ``disc_delta = base_delta + delta``.  Vì ``shift_x`` tuyến tính theo delta,
-    xếp tầng chỉ là cộng số.  Dùng cho trái phiếu tăng vốn, nơi nền là đường
-    nhóm **đã cộng OAS** của trái phiếu không tăng vốn có quyền chọn.  Giá trị
-    trả về là ``delta`` — phần chồng thêm — chứ không phải tổng.
+    ``base_delta`` is the **base** that ``delta`` is layered on: the tree uses
+    ``disc_delta = base_delta + delta``. Because ``shift_x`` is linear in delta, layering is just
+    addition. Used for capital-raising bonds, where the base is the group curve **with the OAS
+    of non-capital-raising bonds with options already added**. The returned value is ``delta`` —
+    the extra layer — not the total.
+
+    Args:
+        spec (BondTermSheet): The bond term sheet.
+        obs_date: Observation date.
+        obs_dirty_price: Observed dirty price per 100 of par.
+        disc_df: Discount curve (LSCK) of the issuer group.
+        params (ModelParams): Hull-White parameters.
+        ref_df: Reference curve for floating legs, or None.
+        base_delta (float): Base shift the calibrated ``delta`` is layered on.
+        lo (float): Initial lower bracket.
+        hi (float): Initial upper bracket.
+        xtol (float): Root-finding tolerance passed to ``brentq``.
+        max_expand (int): Maximum number of bracket widenings on each side.
+        option_anchor: Anchor date of the American exercise ladder; defaults to the issue date.
+        **tree_kw: Extra keyword arguments passed to ``build_tree``.
+
+    Returns:
+        CalibResult: The result; ``status != "ok"`` on failure (no exception is raised).
     """
     bucket = remaining_tenor_bucket(obs_date, spec.maturity_date)
     res = CalibResult(
@@ -350,7 +483,7 @@ def calibrate_delta(spec: BondTermSheet, obs_date, obs_dirty_price, *,
         obs_dirty_price=float(obs_dirty_price),
     )
     if option_anchor is None:
-        option_anchor = spec.issue_date     # thang American cố định, xem docstring bond_pricer
+        option_anchor = spec.issue_date     # fixed American ladder, see bond_pricer docstring
 
     tree_kw.setdefault("ref_df_raw", ref_df)
     n = [0]
@@ -397,45 +530,58 @@ def calibrate_delta(spec: BondTermSheet, obs_date, obs_dirty_price, *,
 
     res.delta, res.n_eval = float(delta), n[0]
     res.resid_price = f(delta)
-    # Không đặt ngưỡng loại |delta|: nguồn giá là phát hành sơ cấp, và chênh
-    # giữa coupon ấn định lúc phát hành với đường cong thứ cấp có thể lớn và
-    # đổi dấu một cách chính đáng. Một ngưỡng cơ học sẽ cắt đúng những quan sát
-    # mang nhiều thông tin nhất. Quan sát bất thường được nhìn qua bảng nguồn
-    # (`*_provenance.csv`) và tệp `*_calibrated.csv`.
+    # No rejection threshold on |delta|: the price source is primary issuance, and the gap
+    # between the coupon fixed at issue and the secondary curve can legitimately be large and
+    # change sign. A mechanical threshold would cut exactly the most informative observations.
+    # Unusual observations are reviewed via the provenance table (`*_provenance.csv`) and the
+    # `*_calibrated.csv` file.
     return res
 
 
 # ---------------------------------------------------------------------------
-# Gộp thành chuỗi tháng
+# Aggregating into a monthly series
 # ---------------------------------------------------------------------------
 def monthly_delta_raw(calib_df: pd.DataFrame, *, until=None,
                       since=None) -> pd.Series:
-    """Bình quân ``delta`` theo mệnh giá giao dịch, **một giá trị cho mỗi tháng**.
+    """
+    Average ``delta`` weighted by traded par, **one value per month**.
 
     .. math:: \\bar\\delta_\\mu = \\frac{\\sum_k N_k \\delta_k}{\\sum_k N_k}
 
-    Pool gộp chung mọi phân nhóm tổ chức phát hành: phần rủi ro riêng của từng
-    tổ chức đã nằm trong đường cong nhóm dùng để chiết khấu, nên ``delta`` còn
-    lại đo phần bù của tính chất thứ cấp — đại lượng chung.
+    The pool combines all issuer groups: each issuer's own risk is already in the group curve used
+    for discounting, so the remaining ``delta`` measures the premium for subordination — a common
+    quantity.
 
-    **Không tách theo rổ kỳ hạn.**  Bản trước chia bình quân theo (tháng × rổ),
-    nhưng dữ liệu không đỡ nổi mức chi tiết đó: trên sổ hiện tại chỉ ba rổ
-    (5Y, 7Y, 10Y) từng có giao dịch trong số 18 rổ chuẩn, và phần lớn tháng chỉ
-    có một tới hai quan sát. Chia theo rổ khi đó không tạo ra cấu trúc kỳ hạn
-    thật mà chỉ gán nhiễu của một giao dịch lẻ vào một rổ rồi lan sang các rổ
-    khác qua quy tắc vá — tức là độ chính xác giả.
+    **Not split by tenor bucket.** The previous version averaged by (month × bucket), but the data
+    cannot support that level of detail: on the current book only three buckets (5Y, 7Y, 10Y) out
+    of the 18 standard buckets have ever traded, and most months have only one or two observations.
+    Splitting by bucket then does not produce a real term structure; it just assigns the noise of a
+    single trade to one bucket and spreads it to other buckets via the patch rules — i.e. false
+    precision.
 
-    Cấu trúc kỳ hạn của phần bù **vẫn còn**, nhưng đến từ mô hình chứ không từ
-    việc chia rổ: một ``delta`` duy nhất trên ``x(t)`` sinh ra phần bù
-    ``delta·B_a(tau)/tau`` giảm ngặt theo kỳ hạn (xem đầu module).
+    The premium's term structure **still exists**, but it comes from the model rather than from
+    bucketing: a single ``delta`` on ``x(t)`` produces a premium ``delta·B_a(tau)/tau`` that is
+    strictly decreasing in tenor (see the module header).
 
-    Index là ``PeriodIndex('M')`` **liên tục** — tháng không có quan sát vẫn hiện
-    diện dưới dạng ``NaN`` để :func:`carry_forward` nhìn thấy.  ``until`` nối dài
-    index tới tháng của ngày định giá; ``since`` cắt đầu bảng tại một tháng cho
-    trước (xem :func:`common_start`) thay vì tại tháng đầu tiên có quan sát.
+    The index is a **continuous** ``PeriodIndex('M')`` — months without observations are still
+    present as ``NaN`` so that :func:`carry_forward` can see them. ``until`` extends the index to
+    the month of the value date; ``since`` trims the start of the table at a given month (see
+    :func:`common_start`) instead of at the first month with an observation.
 
-    Quan sát nằm trước ``since`` vẫn được tính vào ``raw`` rồi bị ``reindex`` loại
-    ra — chúng đã được dò và lưu trong cache, chỉ không vào bảng.
+    Observations before ``since`` are still included in ``raw`` and then dropped by ``reindex`` —
+    they have been calibrated and stored in the cache, they just do not enter the table.
+
+    Args:
+        calib_df (pd.DataFrame): Calibration results (``status``, ``obs_date``, ``par_value``,
+            ``delta``).
+        until: Optional value date; extends the index to its month.
+        since: Optional start date; the table begins at its month.
+
+    Returns:
+        pd.Series: Monthly weighted ``delta`` named ``"delta"``, NaN where a month has no data.
+
+    Raises:
+        ValueError: If there is no observation with ``status='ok'``.
     """
     ok = calib_df[calib_df["status"] == "ok"].copy()
     if not len(ok):
@@ -449,26 +595,34 @@ def monthly_delta_raw(calib_df: pd.DataFrame, *, until=None,
     last = max(raw.index) if until is None else pd.Period(pd.Timestamp(until), freq="M")
     first = (min(raw.index) if since is None
              else pd.Period(pd.Timestamp(since), freq="M"))
-    # Đuôi bảng giữ nguyên quy tắc cũ — `since` chỉ cắt ĐẦU bảng, không đụng đuôi.
+    # The tail keeps the old rule — `since` only trims the START of the table, never the tail.
     end = max(last, max(raw.index), first)
     months = pd.period_range(first, end, freq="M")
     return raw.reindex(months).rename("delta")
 
 
 def carry_forward(raw: pd.Series):
-    """Tháng không có quan sát thì giữ nguyên giá trị của kỳ tính toán gần nhất.
+    """
+    Fill months without observations with the value of the most recent computed period.
 
-    Trả ``(chuỗi đã bù, chuỗi nguồn)``.  Nguồn là ``observed`` hoặc
-    ``carry:<tháng>``.
+    This is the entire remaining patch rule. The previous version had two extra patch steps
+    **within the same month** — borrow from the nearest shorter bucket, then from the nearest
+    bucket in either direction — but those only existed because the average was then split by
+    tenor bucket. Now each month has a single number, so there is no cell left to patch within a
+    month: either the month has observations or it does not.
 
-    Đây là toàn bộ quy tắc vá còn lại.  Bản trước có thêm hai bước vá **trong
-    cùng một tháng** — mượn từ rổ ngắn hơn gần nhất, rồi từ rổ gần nhất hai
-    chiều — nhưng hai bước đó chỉ tồn tại vì bình quân khi ấy chia theo rổ kỳ
-    hạn.  Nay mỗi tháng chỉ có một con số nên trong tháng không còn ô nào để vá:
-    hoặc tháng đó có quan sát, hoặc không.
+    No backward fill: empty months before the first observation are dropped rather than borrowing
+    a number from the future.
 
-    Không bù lùi: tháng rỗng nằm trước quan sát đầu tiên bị cắt bỏ chứ không
-    mượn số của tương lai.
+    Args:
+        raw (pd.Series): Monthly ``delta`` with a continuous ``PeriodIndex``, NaN for gaps.
+
+    Returns:
+        tuple[pd.Series, pd.Series]: ``(filled series, source series)``. The source is
+        ``observed`` or ``carry:<month>``.
+
+    Raises:
+        ValueError: If no month has an observation.
     """
     months = list(raw.index)
     first = next((m for m in months if pd.notna(raw[m])), None)
@@ -487,18 +641,24 @@ def carry_forward(raw: pd.Series):
 
 
 def spread_table(monthly: pd.Series) -> pd.DataFrame:
-    """Chuỗi một ``delta``/tháng -> bảng (tháng × 18 rổ kỳ hạn).
+    """
+    Expand a one-``delta``-per-month series into a (month × 18 tenor buckets) table.
 
-    Mọi cột **giống hệt nhau theo thiết kế**: mô hình chỉ có một ``delta`` cho
-    mỗi tháng (xem :func:`monthly_delta_raw`).  Bảng giữ đủ 18 cột vì phía tiêu
-    dùng — :func:`delta_for_bond` và ``main_v2.py`` — tra theo rổ kỳ hạn còn lại
-    của từng trái phiếu.
+    All columns are **identical by design**: the model has only one ``delta`` per month (see
+    :func:`monthly_delta_raw`). The table keeps all 18 columns because the consumers —
+    :func:`delta_for_bond` and ``main_v2.py`` — look up by each bond's remaining-tenor bucket.
+
+    Args:
+        monthly (pd.Series): Monthly ``delta`` indexed by ``PeriodIndex``.
+
+    Returns:
+        pd.DataFrame: Month-indexed table with one column per pillar in ``TENOR_ORDER``.
     """
     return pd.DataFrame({t: monthly for t in TENOR_ORDER}, index=monthly.index)
 
 
 # ---------------------------------------------------------------------------
-# Hiệu chỉnh cả pool và dựng bảng spread
+# Calibrating the whole pool and building the spread table
 # ---------------------------------------------------------------------------
 CACHE_COLUMNS = ("bond_id", "obs_date", "group", "tenor_bucket", "par_value",
                  "obs_dirty_price", "delta", "status", "n_eval", "resid_price",
@@ -506,7 +666,19 @@ CACHE_COLUMNS = ("bond_id", "obs_date", "group", "tenor_bucket", "par_value",
 
 
 def load_cache(path) -> pd.DataFrame:
-    """Đọc cache hiệu chỉnh; không có file thì trả khung rỗng đúng cột."""
+    """
+    Load the calibration cache; if the file does not exist, return an empty frame with the right
+    columns.
+
+    Args:
+        path: Path to the cache CSV, or a falsy value for no cache.
+
+    Returns:
+        pd.DataFrame: The cached rows with ``CACHE_COLUMNS``.
+
+    Raises:
+        ValueError: If the cache file is missing any of ``CACHE_COLUMNS``.
+    """
     import os
     if not path or not os.path.exists(path):
         return pd.DataFrame(columns=list(CACHE_COLUMNS))
@@ -519,7 +691,7 @@ def load_cache(path) -> pd.DataFrame:
 
 
 def _obs_keys(df) -> set:
-    """``{(bond_id, 'YYYY-MM-DD')}`` — khoá chung cho cache và file quan sát."""
+    """Return ``{(bond_id, 'YYYY-MM-DD')}`` — the key shared by the cache and observation file."""
     if not len(df):
         return set()
     return set(zip(df["bond_id"].astype(str).str.strip(),
@@ -527,7 +699,7 @@ def _obs_keys(df) -> set:
 
 
 def _stale_keys(cached, obs) -> set:
-    """Khoá có trong cache nhưng không còn trong bộ quan sát."""
+    """Return keys present in the cache but no longer in the observation set."""
     return _obs_keys(cached) - _obs_keys(obs)
 
 
@@ -535,43 +707,60 @@ def calibrate_all(obs: pd.DataFrame, bond_df, coupon_schedule_df,
                   holiday_calendar, cfg, *, curve_of_group, params_of,
                   ref_df_of=None, base_delta_of=None, cache_path=None,
                   prune_stale=True, verbose=True) -> pd.DataFrame:
-    """Dò ``delta`` cho **mọi** quan sát trong ``obs``.
+    """
+    Calibrate ``delta`` for **every** observation in ``obs``.
 
-    ``curve_of_group(group) -> zyc_df``, ``params_of(spec) -> ModelParams`` và
-    ``ref_df_of(spec) -> ref_df | None`` được truyền vào chứ không tra trong hàm:
-    module này không biết gì về thư mục đường cong hay ``specs/hullwhite.json``,
-    và nhờ vậy phép kiểm chạy được trên đường cong dựng tay.
+    ``curve_of_group(group) -> zyc_df``, ``params_of(spec) -> ModelParams`` and
+    ``ref_df_of(spec) -> ref_df | None`` are passed in rather than looked up inside the function:
+    this module knows nothing about the curve folder or ``specs/hullwhite.json``, and thanks to
+    that the checks can run on hand-built curves.
 
-    ``base_delta_of(spec, obs_date) -> float`` cấp **nền** cho từng quan sát;
-    bỏ trống nghĩa là nền bằng 0 (đường nhóm trần).
+    ``base_delta_of(spec, obs_date) -> float`` supplies the **base** for each observation; leaving
+    it empty means a base of 0 (the bare group curve).
 
-    ``params_of`` nhận **spec**, không phải nhóm.  Đường chiết khấu chỉ phụ thuộc
-    nhóm, nhưng ``a_L``, ``sigma_L`` và ``rho`` phụ thuộc đường tham chiếu của
-    từng mã: truyền nhóm thôi thì mọi mã thả nổi rơi về ``sigma_L = 0`` và cây
-    hai nhân tố nổ ngay.
+    ``params_of`` takes the **spec**, not the group. The discount curve depends only on the group,
+    but ``a_L``, ``sigma_L`` and ``rho`` depend on each bond's reference curve: passing only the
+    group would make every floating bond fall back to ``sigma_L = 0`` and the two-factor tree
+    blows up immediately.
 
-    **Cache theo nội dung, không theo thời điểm.**  Khoá là
-    ``(bond_id, obs_date)`` cộng ``price_hash``; đổi bất kỳ đầu vào nào — giá
-    quan sát, ``a``, ``sigma``, ``step_days``, hay một ô bất kỳ của đường cong
-    nhóm — là hash đổi và dòng đó được dò lại.  Cache theo dấu thời gian file
-    sẽ bỏ sót đúng trường hợp nguy hiểm nhất: đường cong bị sửa tại chỗ.
+    **Cache by content, not by timestamp.** The key is ``(bond_id, obs_date)`` plus
+    ``price_hash``; changing any input — the observed price, ``a``, ``sigma``, ``step_days``, or
+    any cell of the group curve — changes the hash and that row is recalibrated. A cache keyed on
+    file timestamps would miss exactly the most dangerous case: a curve edited in place.
 
-    ``prune_stale`` (mặc định bật) giữ cho tệp cache **luôn mô tả đúng bộ quan
-    sát hiện tại**: dòng của ``(bond_id, obs_date)`` không còn trong ``obs`` bị
-    xoá.  Trước đây chúng được giữ lại, nên khi thay file quan sát thì dòng của
-    bộ dữ liệu cũ sống mãi — tệp cache mô tả một bộ quan sát không còn tồn tại
-    và ai đọc nó để dựng lại bảng sẽ ra số khác với bảng thật.  Bảng spread
-    không sai vì nó dựng từ ``obs``, nhưng một tệp kết xuất nói dối là đủ để
-    phải sửa.
+    ``prune_stale`` (on by default) keeps the cache file **always describing the current
+    observation set**: rows for ``(bond_id, obs_date)`` no longer in ``obs`` are deleted.
+    Previously they were kept, so after replacing the observation file the old dataset's rows
+    lived on forever — the cache file described an observation set that no longer existed, and
+    anyone reading it to rebuild the table would get numbers different from the real table. The
+    spread table itself was not wrong because it is built from ``obs``, but an output file that
+    lies is reason enough to fix it.
 
-    Đặt ``prune_stale=False`` khi cố ý chạy trên một **tập con** quan sát và
-    muốn giữ phần còn lại của cache.
+    Set ``prune_stale=False`` when deliberately running on a **subset** of observations and you
+    want to keep the rest of the cache.
+
+    Args:
+        obs (pd.DataFrame): Observations from :func:`load_price_obs`.
+        bond_df: Term sheet DataFrame.
+        coupon_schedule_df: Coupon schedule DataFrame.
+        holiday_calendar: Holiday calendar used to build the term sheet.
+        cfg: Model configuration.
+        curve_of_group: ``group -> zyc_df`` discount curve (LSCK) lookup.
+        params_of: ``spec -> ModelParams`` lookup.
+        ref_df_of: Optional ``spec -> ref_df | None`` reference curve lookup.
+        base_delta_of: Optional ``(spec, obs_date) -> float`` base shift lookup.
+        cache_path: Path to the cache CSV, or None to disable caching.
+        prune_stale (bool): Drop cache rows for observations no longer in ``obs``.
+        verbose (bool): Print per-observation progress.
+
+    Returns:
+        pd.DataFrame: One row per observation with ``CACHE_COLUMNS``.
     """
     from src.bond_pricer import BondTermSheet
 
     cached = load_cache(cache_path)
-    # Chỉ nhận lại dòng đã dò THÀNH CÔNG.  Cache một thất bại là tự bịt mắt: lần
-    # sau sửa đúng nguyên nhân mà khoá không đổi thì nó vẫn trả về lỗi cũ.
+    # Only reuse rows that calibrated SUCCESSFULLY. Caching a failure is self-blinding: after the
+    # real cause is fixed, the key is unchanged and it would keep returning the old error.
     ok_cached = cached[cached["status"] == "ok"] if len(cached) else cached
     hit = {(str(r["bond_id"]), str(r["obs_date"]), str(r["price_hash"])): r
            for _, r in ok_cached.iterrows()}
@@ -592,7 +781,8 @@ def calibrate_all(obs: pd.DataFrame, bond_df, coupon_schedule_df,
                 else float(base_delta_of(spec, obs_date)))
 
         key_hash = price_hash(float(o["dirty_price"]), group, params,
-                              spec.step_days, zyc_df, ref_df, base_delta=base)
+                              spec.step_days, zyc_df, ref_df, base_delta=base,
+                              spec_key=spec_fingerprint(spec))
         key = (bond_id, obs_date.date().isoformat(), key_hash)
         if key in hit:
             row = dict(hit[key])
@@ -603,8 +793,8 @@ def calibrate_all(obs: pd.DataFrame, bond_df, coupon_schedule_df,
                                   base_delta=base)
             row = res.as_row()
             row["price_hash"] = key_hash
-        # par_value là của QUAN SÁT, không phải của term sheet — calibrate_delta
-        # không nhìn thấy nó nên gán ở đây, kể cả khi lấy từ cache.
+        # par_value belongs to the OBSERVATION, not the term sheet — calibrate_delta cannot see
+        # it, so it is assigned here, even when the row comes from the cache.
         row["par_value"] = float(o["par_value"])
         rows.append(row)
         if verbose:
@@ -618,8 +808,8 @@ def calibrate_all(obs: pd.DataFrame, bond_df, coupon_schedule_df,
     if cache_path:
         fresh = out[out["status"] == "ok"]
         if prune_stale:
-            # `obs` là toàn bộ bộ quan sát, và `fresh` đã phủ hết phần dò được
-            # của nó, nên mọi dòng cũ đều hoặc đã bị thay hoặc đã mồ côi.
+            # `obs` is the full observation set and `fresh` already covers everything in it that
+            # calibrated, so every old row is either replaced or orphaned.
             stale = _stale_keys(cached, obs)
             merged = fresh
         else:
@@ -640,14 +830,27 @@ def calibrate_all(obs: pd.DataFrame, bond_df, coupon_schedule_df,
 
 def build_tier2_spread_table(calib_df: pd.DataFrame, *, until, a, since=None,
                              out_path=None, zero_path=None, prov_path=None):
-    """``calib_df`` -> bảng spread hàng tháng.
+    """
+    Build the monthly spread table from ``calib_df``.
 
-    Trả ``(spread, zero_eq, provenance)``.  ``a`` chỉ dùng cho bảng phái sinh
-    ``zero_eq`` — bảng chính vẫn là ``delta`` trong không gian ``x(t)``.
+    ``a`` is used only for the derived ``zero_eq`` table — the main table is still ``delta`` in
+    ``x(t)`` space.
 
-    ``provenance`` là khung một dòng mỗi tháng, kèm số quan sát và tổng mệnh giá
-    đứng sau con số của tháng đó — đọc cùng bảng chính để biết tháng nào là số
-    liệu thật và mỏng đến mức nào.
+    ``provenance`` is a one-row-per-month frame carrying the number of observations and total par
+    behind that month's figure — read it alongside the main table to know which months are real
+    data and how thin they are.
+
+    Args:
+        calib_df (pd.DataFrame): Calibration results from :func:`calibrate_all`.
+        until: Value date; the table is extended to its month.
+        a (float): Hull-White mean reversion used for the zero-equivalent table.
+        since: Optional start date (see :func:`common_start`).
+        out_path: Optional CSV path for the spread table.
+        zero_path: Optional CSV path for the zero-equivalent table.
+        prov_path: Optional CSV path for the provenance table.
+
+    Returns:
+        tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]: ``(spread, zero_eq, provenance)``.
     """
     raw = monthly_delta_raw(calib_df, until=until, since=since)
     monthly, nguon = carry_forward(raw)
@@ -670,13 +873,21 @@ def build_tier2_spread_table(calib_df: pd.DataFrame, *, until, a, since=None,
 
 
 # ---------------------------------------------------------------------------
-# Tra cứu và báo cáo
+# Lookup and reporting
 # ---------------------------------------------------------------------------
 def zero_equivalent(spread_df: pd.DataFrame, a: float) -> pd.DataFrame:
-    """``delta`` -> spread trên lãi suất zero, ``delta · B_a(tau)/tau``.
+    """
+    Convert ``delta`` into a spread on the zero rate, ``delta · B_a(tau)/tau``.
 
-    Đây mới là con số đưa vào tài liệu phương pháp luận và báo cáo — ``delta``
-    thô không so sánh được giữa các nhóm vì ``a`` khác nhau.
+    This is the figure that goes into the methodology document and reports — raw ``delta`` is not
+    comparable across groups because ``a`` differs.
+
+    Args:
+        spread_df (pd.DataFrame): Month × tenor table of ``delta``.
+        a (float): Hull-White mean reversion.
+
+    Returns:
+        pd.DataFrame: The zero-rate-equivalent spread table, same shape as ``spread_df``.
     """
     from callput import hw_B
     tau = np.array([TENOR_MONTHS[t] / 12.0 for t in spread_df.columns])
@@ -684,6 +895,18 @@ def zero_equivalent(spread_df: pd.DataFrame, a: float) -> pd.DataFrame:
 
 
 def load_spread_table(path) -> pd.DataFrame:
+    """
+    Load a monthly spread table written by :func:`build_tier2_spread_table`.
+
+    Args:
+        path: Path to the spread CSV (month index, one column per tenor pillar).
+
+    Returns:
+        pd.DataFrame: The table with a monthly ``PeriodIndex`` and columns in ``TENOR_ORDER``.
+
+    Raises:
+        ValueError: If a tenor column is missing or any cell is empty (carry_forward not run).
+    """
     df = pd.read_csv(path, index_col=0)
     df.index = pd.PeriodIndex(df.index, freq="M")
     missing = [t for t in TENOR_ORDER if t not in df.columns]
@@ -696,7 +919,20 @@ def load_spread_table(path) -> pd.DataFrame:
 
 
 def delta_for_bond(spread_df: pd.DataFrame, value_date, maturity_date) -> float:
-    """Một số ``delta`` cho một trái phiếu tại ngày định giá."""
+    """
+    Return the single ``delta`` for one bond at the value date.
+
+    Args:
+        spread_df (pd.DataFrame): Monthly spread table from :func:`load_spread_table`.
+        value_date: The valuation date.
+        maturity_date: The bond maturity date.
+
+    Returns:
+        float: ``delta`` for the value-date month and the bond's remaining-tenor bucket.
+
+    Raises:
+        ValueError: If the table does not contain the value-date month.
+    """
     m = pd.Period(pd.Timestamp(value_date), freq="M")
     if m not in spread_df.index:
         raise ValueError(
@@ -706,27 +942,81 @@ def delta_for_bond(spread_df: pd.DataFrame, value_date, maturity_date) -> float:
     return float(spread_df.loc[m, remaining_tenor_bucket(value_date, maturity_date)])
 
 
-def price_hash(obs_dirty_price, group, params, step_days, zyc_df,
-               ref_df=None, base_delta: float = 0.0) -> str:
-    """Khoá cache theo nội dung: băm **mọi** đầu vào của một lần dò.
+_ROOT = Path(__file__).resolve().parents[1]
+# Source files whose content decides a calibrated value. Hashing the code itself means no one has
+# to remember to bump a version: any edit invalidates the cache (a full recalibration takes a few
+# minutes), and a pricing fix can never be hidden behind numbers cached from the old code.
+_PRICING_SOURCES = (
+    *sorted((_ROOT / "callput").glob("*.py")),
+    *(_ROOT / "src" / f for f in ("bond_schedule.py", "bond_pricer.py", "map_curve.py",
+                                   "daycount.py", "tier2_spread.py")),
+)
 
-    Nguyên tắc là khoá phải phủ hết những gì đổi được kết quả, vì cache sai
-    không báo lỗi — nó trả về một con số cũ trông vẫn hợp lý.
 
-    ``a_r`` **bắt buộc** có mặt: nó vừa chi phối động học cây vừa chi phối hình
-    dạng vector bump ``B_a(tau)/tau``, nên hiệu chỉnh lại Hull-White cho đường
-    nhóm làm mọi ``delta`` cũ vô nghĩa.
+def spec_fingerprint(spec: BondTermSheet) -> str:
+    """
+    Hash everything about one bond, and the pricing code, that can change its calibrated value.
 
-    ``base_delta`` cũng phải có: hai pipeline (OAS không tăng vốn và delta tăng
-    vốn) chạy trên **cùng** bộ đường cong và **cùng** bộ tham số, chỉ khác nền.
-    Bỏ nó khỏi khoá là hai pipeline dùng chung ô cache và trả số của nhau.
+    It covers the term-sheet row, the coupon schedule and reset dates actually built from it (so
+    a change in the holiday calendar or rolling_date is caught through its effect), the adjusted
+    maturity, the pricing config, and the source of the pricing code.
 
-    ``a_L``, ``sigma_L``, ``rho`` và cả nội dung đường tham chiếu cũng phải có:
-    với mã thả nổi, chân tham chiếu quyết định dòng tiền chứ không chỉ chiết
-    khấu.  Khoá chỉ gồm nhóm sẽ coi hai mã cùng nhóm khác đường tham chiếu là
-    một.
+    Args:
+        spec (BondTermSheet): The bond.
+
+    Returns:
+        str: SHA-1 hex digest.
     """
     h = hashlib.sha1()
+    h.update(spec.frame.to_csv(index=False).encode())
+    h.update(pd.util.hash_pandas_object(spec.coupon_schedule, index=False).values.tobytes())
+    h.update(repr([str(d) for d in spec.reset_dates]).encode())
+    h.update(repr(spec.maturity_date).encode())
+    h.update(repr(spec.cfg).encode())
+    for path in _PRICING_SOURCES:
+        h.update(path.read_bytes())
+    return h.hexdigest()
+
+
+def price_hash(obs_dirty_price, group, params, step_days, zyc_df,
+               ref_df=None, base_delta: float = 0.0, spec_key: str = "") -> str:
+    """
+    Compute the content-based cache key: a hash of **every** input to one calibration.
+
+    The principle is that the key must cover everything that can change the result, because a
+    wrong cache raises no error — it returns an old number that still looks plausible.
+
+    ``a_r`` is **mandatory**: it drives both the tree dynamics and the shape of the bump vector
+    ``B_a(tau)/tau``, so re-calibrating Hull-White for the group curve makes every old ``delta``
+    meaningless.
+
+    ``base_delta`` must be included too: the two pipelines (non-capital-raising OAS and
+    capital-raising delta) run on the **same** set of curves and the **same** parameters, differing
+    only in the base. Leaving it out of the key makes the two pipelines share cache cells and
+    return each other's numbers.
+
+    ``a_L``, ``sigma_L``, ``rho`` and the content of the reference curve must also be included: for
+    floating bonds the reference leg drives the cash flows, not just discounting. A key made of
+    the group alone would treat two bonds in the same group with different reference curves as
+    one.
+
+    Args:
+        obs_dirty_price: Observed dirty price.
+        group: Issuer group (TCPH).
+        params: Model parameters (``a_r``, ``sigma_r``, ``a_L``, ``sigma_L``, ``rho``).
+        step_days: Tree time step in days.
+        zyc_df: Group discount curve (LSCK).
+        ref_df: Reference curve, or None.
+        base_delta (float): Base shift the calibration is layered on.
+        spec_key (str): :func:`spec_fingerprint` of the bond (term sheet, built schedule, config
+            and pricing code). Without it a term-sheet correction or a pricing fix would keep
+            returning the old cached value.
+
+    Returns:
+        str: SHA-1 hex digest.
+    """
+    h = hashlib.sha1()
+    h.update(spec_key.encode())
     parts = (f"{obs_dirty_price!r}", group, f"{step_days!r}",
              f"{params.a_r!r}", f"{params.sigma_r!r}", f"{params.a_L!r}",
              f"{params.sigma_L!r}", f"{params.rho!r}", f"{base_delta!r}")

@@ -219,8 +219,9 @@ pytest tests -q
 ```
 
 The two that carry the most weight are cross-checks rather than tolerances:
-`test_crosscheck.py` prices against `src/multi_hw_tree.py` on a uniform grid and
-watches the gap shrink as the grid refines, and `test_multi_curve.py` prices the
+`test_crosscheck.py` priced against the earlier engine `src/multi_hw_tree.py` on a uniform
+grid and watched the gap shrink as the grid refined (that engine and this test suite are not
+in this repository; see git history), and `test_multi_curve.py` prices the
 fixing axis against an independent in-advance collapse that values each deferred
 coupon at its fixing node. A binding floor turns a floater into a fixed-rate bond,
 so the two engines must also agree exactly — which pins the cap/floor convention

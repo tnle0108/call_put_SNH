@@ -1,21 +1,7 @@
-"""VCB Quant IRRBB Call-Put Embed Model."""
+"""
+VCB Quant IRRBB Call-Put Embed Model.
 
-from .curve import YieldCurve
-from .hw_tree import HullWhiteTree
-from .multi_hw_tree import (
-    BondSpec,
-    CouponDef,
-    ExerciseSpec,
-    MultiCurveHWTree,
-    PricingFlags,
-)
-
-__all__ = [
-    "YieldCurve",
-    "HullWhiteTree",
-    "MultiCurveHWTree",
-    "BondSpec",
-    "CouponDef",
-    "ExerciseSpec",
-    "PricingFlags",
-]
+The pricing engine is the ``callput`` package; this package holds the model code around it
+(schedules, curves, shocks, Tier-2 spreads). Import modules directly, e.g.
+``from src.bond_pricer import price_bond``.
+"""

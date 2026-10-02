@@ -8,36 +8,36 @@ from pathlib import Path
 sys.path.insert(0, str(Path.cwd().parents[0]))
 
 import quantmr
-from quantmr.schedule import BusCalendar
 from quantmr.model.shortrate.hullwhite import HullWhite
 from quantmr.utils import DayCount
 
 
 
-def calc_rho(CURVE_NAMES: list):
+def calc_rho(CURVE_NAMES: list, value_date, n_window: int | None = None, save: bool = False):
+    """
+    Estimate the correlation of the Hull-White factor shocks between curves (HW doc, Phụ lục 07).
 
+    For each curve the Hull-White state x(t) is filtered on all curve data up to ``value_date``
+    ("từ 2023 (thời điểm bắt đầu có dữ liệu) đến nay"), smoothed with a Rauch-Tung-Striebel pass,
+    and rescaled as x~(t) = exp(a * t) * (x(t) - mu_t), with t in act365 years from the first
+    filtered date. Since dx~ = sigma * exp(a t) dW, the Pearson correlation of the daily changes
+    of x~ is the correlation of the Brownian drivers dW.
+
+    Args:
+        CURVE_NAMES (list): Curve names known to HullWhite.get, e.g. ["FI_ZYC_VND_VBMA_Bond_FI",
+            "sob4"].
+        value_date: Valuation date; no curve data after it is used.
+        n_window (int | None): If given, correlate only the last ``n_window`` daily changes (a
+            sensitivity option; the document uses the whole history, the default).
+        save (bool): Also write the matrix to datasets/correlation/corr.csv.
+
+    Returns:
+        pd.DataFrame: Correlation matrix of the x~ daily changes, indexed and columned by curve
+        name.
+    """
     ROOT      = Path(quantmr.__file__).resolve().parent.parent
     CORR_FILE = ROOT / "datasets" / "correlation" / "corr.csv"
-
-    REPORT_DATE = np.datetime64("2025-12-31")
-    N_WINDOW    = 250
-    HOLIDAYS    = "vnd"
-
-    # CURVE_NAMES = ["zc usd sr", "zc vnd ccs sr", "zc vnd irs"]
-
-
-    def get_business_dates(report_date: np.datetime64, n: int, calendar: str) -> np.ndarray:
-        buscal = BusCalendar.get(calendar)
-        candidate = pd.date_range(
-            end=pd.Timestamp(report_date) - pd.Timedelta(days=1), periods=3 * n, freq="D"
-        ).values.astype("datetime64[D]")
-        busdays = candidate[buscal.is_busday(candidate)]
-        return np.sort(busdays[-n:])
-
-    DATES = get_business_dates(REPORT_DATE, N_WINDOW+1, HOLIDAYS)
-
-
-    as_of_range = (str(DATES[0] - np.timedelta64(750, "D")), str(REPORT_DATE))
+    as_of_range = ("1900-01-01", str(pd.Timestamp(value_date).date()))
 
     hw_by_curve = {}
     state_by_curve = {}
@@ -55,6 +55,17 @@ def calc_rho(CURVE_NAMES: list):
 
 
     def rts_smooth_scalar(filt: dict) -> np.ndarray:
+        """
+        Rauch-Tung-Striebel backward smoother for a scalar Kalman filter state.
+
+        Steps whose predicted variance is not positive are left at their filtered value.
+
+        Args:
+            filt (dict): Filter output with x_filt, P_filt, x_pred_next, P_pred_next and F_used.
+
+        Returns:
+            np.ndarray: Smoothed state, one value per filter date.
+        """
         x_filt = filt["x_filt"]
         P_filt = filt["P_filt"]
         x_pred_next = filt["x_pred_next"]
@@ -92,14 +103,11 @@ def calc_rho(CURVE_NAMES: list):
         tilde_x_smooth = np.exp(a * t_years) * (x_smooth - r["mu_t"])
         tilde_x_by_curve[name] = pd.Series(tilde_x_smooth, index=idx, name=name)
 
-    tilde_x_frame = pd.concat(tilde_x_by_curve.values(), axis=1, join="inner")
-    window_idx = pd.DatetimeIndex(DATES)
-    tilde_x_frame = tilde_x_frame.reindex(window_idx, method=None).dropna()
-
-    eps      = tilde_x_frame.diff()
-    eps_full = eps.dropna()
-
-
+    # Dates common to every curve, all on or before value_date (the filter only saw those).
+    tilde_x_frame = pd.concat(tilde_x_by_curve.values(), axis=1, join="inner").dropna()
+    eps_full = tilde_x_frame.diff().dropna()
+    if n_window is not None:
+        eps_full = eps_full.iloc[-n_window:]
     corr_eps = eps_full.corr()
 
     pd.set_option("display.float_format", lambda v: f"{v: .6f}")
@@ -109,9 +117,10 @@ def calc_rho(CURVE_NAMES: list):
     corr_out.index.name = "Corr"
     corr_out = corr_out.reset_index()
 
-    CORR_FILE.parent.mkdir(parents=True, exist_ok=True)
-    corr_out.to_csv(CORR_FILE, index=False)
-    print(f"Saved rigorous \u03b5-based correlation to {CORR_FILE}")
+    if save:
+        CORR_FILE.parent.mkdir(parents=True, exist_ok=True)
+        corr_out.to_csv(CORR_FILE, index=False)
+        print(f"Saved rigorous \u03b5-based correlation to {CORR_FILE}")
 
     return corr_eps
 #%%

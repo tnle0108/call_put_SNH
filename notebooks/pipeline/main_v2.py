@@ -1,15 +1,19 @@
 #%%
 import pandas as pd
-import numpy as np
 import sys
 import os
 import json
 from datetime import datetime, date
 
 from pathlib import Path
+
+try:
+    os.chdir(Path(__file__).resolve().parent)
+except NameError:
+    pass
 sys.path.insert(0, str(Path.cwd().parents[1]))
 
-from src.bond_schedule import CouponSchedule, load_holiday_calendar
+from src.bond_schedule import CouponSchedule, load_holiday_calendar, tenor_to_years
 from src.bond_pricer import (
     BondTermSheet, ModelParams, PricingConfig, price_bond_layered,
 )
@@ -24,45 +28,36 @@ from quantmr.model.shortrate.hullwhite import HullWhite
 from quantmr.curve.curvenode import CurveNode
 
 #%%
+"""Define paths and constants for bond pricing pipeline."""
 root = Path.cwd().resolve().parent.parent
 
-BOND_FOLDER_PATH    = os.path.join(root, 'datasets', 'raw')
-CURVE_FOLDER_PATH   = os.path.join(root, 'datasets', 'curve')
-HOLIDAY_FOLDER_PATH = Path.cwd().parents[1] / "datasets" / "holidays"
-HULLWHITE_FILE_PATH = os.path.join(root, 'specs', 'hullwhite.json')
+BOND_FOLDER_PATH    = os.path.join(root, 'datasets', 'raw') # Bond transaction data needed to be valued
+CURVE_FOLDER_PATH   = os.path.join(root, 'datasets', 'curve') # ZYC data for reference curves and discount curves
+HOLIDAY_FOLDER_PATH = os.path.join(root, 'datasets', 'holiday') # Holiday calendar for Vietnam
+HULLWHITE_FILE_PATH = os.path.join(root, 'specs', 'hullwhite.json') # Hull-White parameters for reference curves and discount curves
 
 VALUE_DATE = pd.to_datetime('2026-03-31')
 
-# Nguồn DUY NHẤT của (a, sigma) cho mọi phân nhóm tổ chức phát hành.
-#
-# Đường ZYC của từng nhóm được dựng bằng "đường cơ bản + margin", mà margin thì
-# cập nhật không đều. Hiệu chỉnh Hull-White trực tiếp trên đường nhóm vì vậy cho
-# (a, sigma) không tin cậy — nó bắt cả nhiễu của margin. Mô hình lấy (a, sigma)
-# hiệu chỉnh trên đường cơ bản, còn phần MỨC lãi suất vẫn khớp vào đúng đường
-# nhóm qua bước quy nạp tiến Arrow-Debreu.
-#
-# Nói cách khác: động học vay của đường cơ bản, mức lấy của đường nhóm.
-#
-# Hằng số này phải là chỗ duy nhất quyết định điều đó. Trước đây hành vi này chỉ
-# đúng nhờ specs/hullwhite.json tình cờ bị ghi đè cùng một bộ số cho mọi khoá —
-# không có dòng code nào giữ, và một lần hiệu chỉnh lại theo tên nhóm là mất.
 BASE_CURVE = 'FI_ZYC_VND_VBMA_Bond_FI'
-#"act360", "act365", "actactisda"
+
+# Hull-White calibration tenors (years) per curve, as set in the Hull-White document
+# (20260819_TLXDMH_HW §2.3, "Chuẩn bị"). A reference curve not listed uses its own tenors.
+CALIBRATION_TENORS = {
+    BASE_CURVE.lower(): [3/12, 6/12, 9/12, 1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0,
+                         5.0, 7.0, 10.0, 15.0, 20.0, 30.0],  # VBMA Bond FI
+    'sob4': [1/12, 2/12, 3/12, 6/12, 9/12, 1.0, 2.0, 3.0, 4.0, 5.0],  # ZC VND TK SOB
+}
 DISC_CONVENTION = 'ACT/365'
 REF_CONVENTION  = 'ACT/365'
 
 NORM_STEP_DAYS  = float(21)
 AME_STEP_DAYS   = float(5)
 MIN_STEP_DAYS   = float(3)
-# Giả định: ngày fixing = ngày đặt lại lãi suất (không có độ trễ).
-# Ngày reset vốn đã trùng ngày trả lãi nên fixing không còn sinh mốc neo riêng
-# trên lưới ngày: bỏ được 4 mốc và toàn bộ khoảng vụn 7 ngày cạnh mốc coupon.
-FIXING_LAG_DAYS = float(0)
+FIXING_LAG_DAYS = float(0) # Assumption: fixing date = rate reset date (no lag).
 
 #%%
-# Việc dựng lịch dòng tiền và dựng cây đã chuyển sang src/bond_pricer.py, nơi nó
-# là hàm thuần theo ngày định giá. Nhờ vậy module hiệu chỉnh spread Tier 2 định
-# giá được tại ngày quan sát giá thay vì chỉ tại VALUE_DATE.
+"""Define pricing config and create helpers"""
+# Create a PricingConfig object to hold the configuration for pricing bonds.
 PRICING_CFG = PricingConfig(
     curve_folder=str(CURVE_FOLDER_PATH),
     disc_convention=DISC_CONVENTION,
@@ -75,13 +70,52 @@ PRICING_CFG = PricingConfig(
 )
 
 def _doc_bang(ten, nhan):
+    """
+    Load a spread table from SPREAD_FOLDER_PATH.
+
+    A missing table is reported loudly rather than silently, and the caller treats that layer
+    as 0.
+
+    Args:
+        ten (str): The filename of the spread table to load.
+        nhan (str): What happens without the table, printed in the warning.
+
+    Returns:
+        pd.DataFrame or None: The loaded spread table, or None if the file does not exist.
+    """
     p = os.path.join(SPREAD_FOLDER_PATH, ten)
     if os.path.exists(p):
         return load_spread_table(p)
     print(f"[!] chưa có {p} — {nhan}")
     return None
 
+def calibration_tenors(curve_name):
+    """
+    Hull-White calibration tenors of a curve, in years.
+
+    Args:
+        curve_name (str): Curve name (case-insensitive).
+
+    Returns:
+        list[float]: The tenors set in CALIBRATION_TENORS, or for a curve not listed there its own
+        tenor columns (overnight and week tenors excluded, as in the calibration itself).
+    """
+    if curve_name.lower() in CALIBRATION_TENORS:
+        return CALIBRATION_TENORS[curve_name.lower()]
+    terms = CurveNode.get(curve_name).terms
+    return [tenor_to_years(x) for x in terms if x not in ("ON", "1W", "2W")]
+
 def normalize_coupon_change_date(x):
+    """
+    Normalize one value of a date column in the bond DataFrame.
+
+    Args:
+        x (str | datetime | NaN): The value to normalize.
+
+    Returns:
+        str or NaN: The date as a "MM/DD/YYYY" string (strings pass through unchanged), or NaN
+        if the input was NaN.
+    """
     if pd.isna(x):
         return x
 
@@ -94,24 +128,21 @@ def normalize_coupon_change_date(x):
     return str(x)
 
 #%%
-bond_df = pd.read_csv(os.path.join(BOND_FOLDER_PATH, 'bond placeholder.csv'))
-validate_term_sheet(bond_df)
+"""Read bond data, validate term sheet, and load VBMA bond yield curve."""
+bond_df = pd.read_csv(os.path.join(BOND_FOLDER_PATH, 'term_sheet.csv')) # Read raw bond data from CSV file
+validate_term_sheet(bond_df) # Validate the term sheet data in the bond DataFrame, ensure that `group` and `is_tier2` columns are correctly formatted.
 vbma_bond_fi = pd.read_csv(
     os.path.join(CURVE_FOLDER_PATH, "vbma_bond_fi.csv"),
     index_col="Date",
     parse_dates=True,
-)
+) # Read the VBMA bond yield curve data from CSV file, set the "Date" column as index and parse it as datetime.
 
-holiday_calendar = load_holiday_calendar(HOLIDAY_FOLDER_PATH)
+holiday_calendar = load_holiday_calendar(HOLIDAY_FOLDER_PATH) # Load the holiday calendar for Vietnam from the specified folder path, which will be used for date calculations in bond pricing.
 coupon_schedule_df = CouponSchedule(
     df=bond_df,
     holiday_calendar=holiday_calendar,
     country = 'vnd'
 ).build_coupon_schedule_df()
-# Đường cơ bản: bootstrap nếu chưa có, hiệu chỉnh Hull-White nếu chưa có tham số.
-# Cả hai đều CÓ ĐIỀU KIỆN. Trước đây `hw.calibrate(..., save=True)` chạy vô điều
-# kiện mỗi lần, tức ghi lại specs/hullwhite.json mỗi lần chạy — nên một bảng
-# spread dựng trước đó lặng lẽ lệch pha với bộ tham số đang có trên đĩa.
 date_columns = ["issue_date", "maturity_date", "call_exercise_dates", "put_exercise_dates", "coupon_change_date", "margin_date", "coupon_type_change_date"]
 for col in date_columns:
     if col in bond_df.columns:
@@ -127,6 +158,10 @@ for group in GROUPS:
 
 
 #%%
+# Base curve: bootstrap it if missing, calibrate Hull-White if its parameters are missing.
+# Both steps are CONDITIONAL. `hw.calibrate(..., save=True)` used to run unconditionally,
+# rewriting specs/hullwhite.json on every run, so a previously built spread table silently
+# drifted out of sync with the parameter set on disk.
 _base_csv = os.path.join(CURVE_FOLDER_PATH, f"{BASE_CURVE}.csv")
 if not os.path.exists(_base_csv):
     calc_zyc_df(ytm_df=vbma_bond_fi).to_csv(_base_csv)
@@ -135,7 +170,8 @@ with open(HULLWHITE_FILE_PATH, 'r', encoding='utf-8') as f:
     _hw_all = json.load(f)
 if not {"a", "sigma"} <= set(_hw_all.get(BASE_CURVE.lower(), {})):
     print(f"Chưa có (a, sigma) cho {BASE_CURVE} — đang hiệu chỉnh Hull-White...")
-    HullWhite.get(BASE_CURVE).calibrate(BASE_CURVE, method="kfmh", save=True)
+    HullWhite.get(BASE_CURVE).calibrate(
+        BASE_CURVE, method="kfmh", save=True, tau=calibration_tenors(BASE_CURVE))
     with open(HULLWHITE_FILE_PATH, 'r', encoding='utf-8') as f:
         _hw_all = json.load(f)
 
@@ -146,10 +182,11 @@ print(f"(a, sigma) dùng cho MỌI phân nhóm, lấy từ {BASE_CURVE}: "
 #%%
 
 shocks_list = ["0","1", "2", "3", "4", "5", "6"]
+RHO_BY_REF_CURVE = {}  # rho per reference curve, filled on first use
 bond_results = []
 
-# Hai bảng phần bù, đọc một lần ngoài vòng lặp. Cả hai do build_spreads.py dựng.
-# Thiếu bảng nào thì tầng đó coi như 0 — nói to chứ không im lặng.
+# Two spread tables, read once outside the loop. Both are built by build_spreads.py.
+# A missing table means that layer is treated as 0, reported loudly rather than silently.
 SPREAD_FOLDER_PATH = os.path.join(root, 'datasets', 'spread')
 
 
@@ -158,16 +195,16 @@ oas_df = _doc_bang('nontier2_oas_monthly.csv',
 spread_df = _doc_bang('tier2_spread_monthly.csv',
                       'trái phiếu tăng vốn sẽ dùng delta = 0')
 
-# Mặc định chạy cả sổ. Thu hẹp khi cần gỡ lỗi — mã American dùng step 5 ngày
-# nên một mình nó chiếm phần lớn thời gian của cả lần chạy:
-#   CP_ROWS=0,5,41       chạy vài dòng
-#   CP_DUMP=<đường dẫn>  ghi kết quả dạng hex float để so từng bit
+# Runs the whole book by default. Narrow it when debugging: the American bond uses a 5-day
+# step, so it alone takes most of the run time:
+#   CP_ROWS=0,5,41       run only these rows
+#   CP_DUMP=<path>       write results as hex floats for bit-exact comparison
 _rows_env = os.environ.get("CP_ROWS", "all")
 ROW_SELECTION = (list(range(len(bond_df))) if _rows_env == "all"
                  else [int(x) for x in _rows_env.split(",")])
 
-#chỉ lấy những bond có ngày phát hành < value date< ngày đáo hạn
-# chuyển issue_date và maturity_date sang datetime để so sánh
+# Keep only bonds with issue date <= value date < maturity date.
+# Convert issue_date and maturity_date to datetime for the comparison.
 bond_df["issue_date"] = pd.to_datetime(bond_df["issue_date"])
 bond_df["maturity_date"] = pd.to_datetime(bond_df["maturity_date"])
 ROW_SELECTION = [i for i in ROW_SELECTION if bond_df.iloc[i]["issue_date"] <= VALUE_DATE < bond_df.iloc[i]["maturity_date"]]
@@ -182,8 +219,8 @@ for i in ROW_SELECTION:
     ref_curve_name = spec.ref_curve_name
     maturity_date = spec.maturity_date
     
-    # Đường chiết khấu LUÔN là đường của phân nhóm tổ chức phát hành — kể cả với
-    # trái phiếu tăng vốn. Phần bù tăng vốn vào sau, dưới dạng disc_delta.
+    # The discount curve is ALWAYS the issuer group's curve, Tier-2 bonds included.
+    # The Tier-2 spread comes in afterwards, as disc_delta.
     bond_group = spec.group
     zyc_name = f'FI_ZYC_VND_{bond_group}'
     zyc_path = Path(CURVE_FOLDER_PATH) / f"{zyc_name}.csv"
@@ -194,22 +231,22 @@ for i in ROW_SELECTION:
         ytm_df = pd.read_csv(os.path.join(CURVE_FOLDER_PATH, f'{bond_group}.csv'),
                              index_col=0, parse_dates=True)
         zyc_df = calc_zyc_df(ytm_df)
-        zyc_df.to_csv(zyc_path)     # chỉ ghi khi vừa bootstrap, không ghi đè mỗi vòng
+        zyc_df.to_csv(zyc_path)     # write only right after bootstrapping, not every loop
 
     CurveNode.get(
         zyc_name,
         refresh=True,
     )
-
-    # Hai lượng dịch trạng thái x(t) — KHÔNG phải spread cộng thẳng vào lãi suất
-    # zero. build_legs tự dựng vector bump delta*B_a(tau)/tau.
+    zyc_df = zyc_df[zyc_df.index <= VALUE_DATE]
+    # Two shifts of the state variable x(t), NOT spreads added directly to zero rates.
+    # build_legs builds the bump vector delta*B_a(tau)/tau itself.
     #
-    #   Không tăng vốn   full = OAS          straight = 0
-    #   Tăng vốn         full = OAS + delta  straight = delta
+    #   Non-Tier-2   full = OAS          straight = 0
+    #   Tier-2       full = OAS + delta  straight = delta
     #
-    # Chân straight nằm trên đường nhóm (cộng delta nếu tăng vốn) vì đường nhóm
-    # vốn dựng từ trái phiếu KHÔNG quyền chọn — nó đúng là đường cho trái phiếu
-    # không quyền chọn. Hàng dưới đúng bằng "cây tăng vốn có quyền chọn trừ OAS".
+    # The straight leg sits on the group curve (plus delta for Tier-2) because the group
+    # curve is built from bonds WITHOUT options, so it is exactly the curve for an option-free
+    # bond. The bottom row equals "the callable Tier-2 tree minus OAS".
     is_tier2 = parse_tier2_flag(row.get('is_tier2'))
     oas = (0.0 if oas_df is None
            else delta_for_bond(oas_df, VALUE_DATE, spec.maturity_date))
@@ -223,9 +260,9 @@ for i in ROW_SELECTION:
 
     with open(HULLWHITE_FILE_PATH, 'r', encoding='utf-8') as f:
         hw_params = json.load(f)
-    # Không hiệu chỉnh Hull-White theo tên nhóm: (a, sigma) lấy từ BASE_CURVE,
-    # xem giải thích ở đầu file. Đường cong `zyc_df` của nhóm vẫn là đường chiết
-    # khấu, và bước quy nạp tiến Arrow-Debreu vẫn khớp MỨC lãi suất vào nó.
+    # No Hull-White calibration per group name: (a, sigma) come from BASE_CURVE (see the
+    # rationale at BASE_CURVE in build_spreads.py). The group's `zyc_df` is still the discount
+    # curve, and the Arrow-Debreu forward induction still fits the rate LEVEL to it.
     a_r, sigma_r = A_R, SIGMA_R
 
 
@@ -235,6 +272,7 @@ for i in ROW_SELECTION:
 
         ref_df_raw.index = pd.to_datetime(ref_df_raw.index)
         ref_df_raw = ref_df_raw.sort_index()
+        ref_df_raw = ref_df_raw[ref_df_raw.index <= VALUE_DATE]
 
         with open(HULLWHITE_FILE_PATH, 'r', encoding='utf-8') as f:
             hw_params = json.load(f)
@@ -250,7 +288,8 @@ for i in ROW_SELECTION:
             print("Running Hull-White calibration...")
 
             hw = HullWhite.get(ref_curve_name)
-            result = hw.calibrate(ref_curve_name, method="kfmh", save=True)
+            hw.calibrate(ref_curve_name, method="kfmh", save=True,
+                         tau=calibration_tenors(ref_curve_name))
             with open(HULLWHITE_FILE_PATH, "r", encoding="utf-8") as f:
                 hw_params = json.load(f)
             ref_curve_params = hw_params[ref_curve_name]
@@ -258,10 +297,16 @@ for i in ROW_SELECTION:
         a_L = ref_curve_params["a"]
         sigma_L = ref_curve_params["sigma"]
 
-        # reset_dates / fixed_rate nay nằm trong BondTermSheet.
-        # rho đo giữa đường cơ bản và đường tham chiếu — đúng cặp nhân tố đang
-        # được mô phỏng, vì động học của chân chiết khấu lấy từ BASE_CURVE.
-        rho_param = float(calc_rho(CURVE_NAMES=[BASE_CURVE, ref_curve_name]).iloc[1, 0])
+        # reset_dates / fixed_rate now live in BondTermSheet.
+        # rho is measured between the base curve and the reference curve: exactly the factor
+        # pair being simulated, since the discount leg's dynamics come from BASE_CURVE.
+        # Same pair for every bond on this reference curve: estimate once per run (HW doc,
+        # Phụ lục 07: whole history up to VALUE_DATE) and keep a copy in corr.csv.
+        if ref_curve_name not in RHO_BY_REF_CURVE:
+            RHO_BY_REF_CURVE[ref_curve_name] = float(calc_rho(
+                CURVE_NAMES=[BASE_CURVE, ref_curve_name], value_date=VALUE_DATE, save=True,
+            ).iloc[1, 0])
+        rho_param = RHO_BY_REF_CURVE[ref_curve_name]
         print(f'rho = {rho_param:.6f}')
     else:
         a_L = 0.0
@@ -271,8 +316,9 @@ for i in ROW_SELECTION:
     print("\n" + "-" * 50)
     print(f"{'Scenario':<15} | {'Diff':>20}")
     print("-" * 50)
-    # Bản gốc của sigma, chụp TRƯỚC vòng lặp sốc. Trước đây `sigma_r = 1.25 * sigma_r`
-    # ghi đè chính nó nên hệ số dồn thành 1.25**k: kịch bản 6 dùng 3.81 lần sigma gốc.
+    # Original sigma, snapshotted BEFORE the shock loop. `sigma_r = 1.25 * sigma_r` used to
+    # overwrite itself, so the factor compounded to 1.25**k: scenario 6 used 3.81x the base
+    # sigma.
     sigma_r0, sigma_L0 = sigma_r, sigma_L
     for shock in shocks_list:
         if shock == "0":
@@ -286,9 +332,9 @@ for i in ROW_SELECTION:
 
         params = ModelParams(a_r=a_r, sigma_r=sigma_r,
                              a_L=a_L, sigma_L=sigma_L, rho=rho_param)
-        # Hai chân nằm trên hai đường chiết khấu khác nhau khi OAS != 0.
-        # Khi chưa có bảng OAS, hai delta bằng nhau và hàm đi nhánh một cây,
-        # cho ra đúng hai con số của price_bond cũ.
+        # The two legs sit on two different discount curves when OAS != 0.
+        # Without an OAS table the two deltas are equal and the function takes the one-tree
+        # branch, reproducing exactly the two numbers of the old price_bond.
         res = price_bond_layered(
             spec, VALUE_DATE,
             disc_df=disc_df, ref_df=ref_df, params=params,
@@ -315,8 +361,8 @@ pd.DataFrame(bond_results).to_excel(
     index=False,
 )
 
-# Bản kết xuất để so hồi quy. float.hex() là biểu diễn bit-chính xác nên hai lần
-# chạy so được bằng `==` trên chuỗi, không cần dung sai.
+# Dump for regression comparison. float.hex() is a bit-exact representation, so two runs
+# can be compared with `==` on the strings, with no tolerance.
 if os.environ.get("CP_DUMP"):
     import json
     json.dump(
@@ -325,43 +371,3 @@ if os.environ.get("CP_DUMP"):
         open(os.environ["CP_DUMP"], "w"), indent=1, sort_keys=True,
     )
     print(f"\n[dump] {len(bond_results)} dòng -> {os.environ['CP_DUMP']}")
-        
-#%%
-
-# {
-#     "sob4": {
-#         "a": 0.8304433648620897,
-#         "sigma": 0.03306253921457648,
-#         "sigma_eps": 0.004898657265031288
-#     },
-#     "fi_zyc_vnd_lb_g1": {
-#         "a": 0.18273340792314074,
-#         "sigma": 0.017431052919058356,
-#         "sigma_eps": 0.00402804405685867
-#     },
-#     "fi_zyc_vnd_lb_g2": {
-#         "a": 0.1897463628519041,
-#         "sigma": 0.021410942539161926,
-#         "sigma_eps": 0.00391402745795776
-#     },
-#     "fi_zyc_vnd_lb_g3": {
-#         "a": 1.026880483917802,
-#         "sigma": 0.0220283426472668,
-#         "sigma_eps": 0.007166656633431443
-#     },
-#     "fi_zyc_vnd_tier2_vbma": {
-#         "a": 0.028014582243074265,
-#         "sigma": 0.018533583408884276,
-#         "sigma_eps": 0.0044531087197577915
-#     },
-#     "fi_zyc_vnd_tier2_vbma_bond_fi": {
-#         "a": 0.30115535542342386,
-#         "sigma": 0.022524596720666347,
-#         "sigma_eps": 0.004204820470760032
-#     },
-#     "fi_zyc_vnd_vbma_bond_fi": {
-#         "a": 0.3302591457703021,
-#         "sigma": 0.018575040457465497,
-#         "sigma_eps": 0.0036858966865396174
-#     }
-# }

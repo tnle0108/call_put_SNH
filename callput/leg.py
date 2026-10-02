@@ -1,6 +1,7 @@
 """Curve legs and the Hull-White affine primitives.
 
-Lifted from :mod:`src.hw_tree` -- ``_B``, ``_integrated_variance`` and
+Lifted from the earlier engine's ``src/hw_tree.py`` (removed; see git history) --
+``_B``, ``_integrated_variance`` and
 ``_ou_variance`` become module-level functions so both the one- and two-factor
 engines share them, and the ``a -> 0`` limits are carried over unchanged.
 """

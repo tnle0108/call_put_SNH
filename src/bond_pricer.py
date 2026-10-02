@@ -1,16 +1,14 @@
-"""Một dòng term sheet + một ngày định giá -> CallPutTree.
+"""
+One term-sheet row + one valuation date -> CallPutTree.
 
-Tách nguyên trạng từ thân vòng lặp ``notebooks/pipeline/main_v2.py`` (các khối
-dòng 53-76, 107-154, 232-245, 262-263, 265-301 của bản trước khi tách).
+The core property is that the module is **pure in ``rpd``**. It reads no files, writes no files and
+reads no globals; everything goes through parameters. Changing ``rpd`` changes the valuation date
+and nothing else has to be edited. That is what lets the Tier-2 spread calibration module price at
+the *price observation date* instead of at ``VALUE_DATE``.
 
-Điểm cốt lõi: **thuần theo ``rpd``**.  Module không đọc file, không ghi file,
-không đọc biến toàn cục; mọi thứ đi qua tham số.  Đổi ``rpd`` là đổi ngày định
-giá, không phải sửa gì khác.  Đó là điều kiện để module hiệu chỉnh spread Tier 2
-định giá được tại *ngày quan sát giá* thay vì tại ``VALUE_DATE``.
-
-Phần I/O — đọc đường cong, cache ``FI_ZYC_VND_*.csv``, ``CurveNode.get``, đọc
-``specs/hullwhite.json``, ``calc_rho``, vòng lặp sốc, ghi Excel — **ở lại**
-``main_v2.py``.  Module chỉ nhận DataFrame đường cong đã sẵn sàng.
+The I/O — reading curves, the ``FI_ZYC_VND_*.csv`` cache, ``CurveNode.get``, reading
+``specs/hullwhite.json``, ``calc_rho``, the shock loop, writing Excel — **stays** in
+``main_v2.py``. This module only receives curve DataFrames that are already prepared.
 """
 from __future__ import annotations
 
@@ -33,11 +31,24 @@ __all__ = [
 
 
 # ---------------------------------------------------------------------------
-# Cấu hình
+# Configuration
 # ---------------------------------------------------------------------------
 @dataclass(frozen=True)
 class PricingConfig:
-    """Hằng số mô hình — bất biến theo trái phiếu và theo ngày định giá."""
+    """
+    Model constants, invariant across bonds and across valuation dates.
+
+    Attributes:
+        curve_folder (str): Folder holding the curve files.
+        disc_convention (str): Day-count convention of the discount curve (LSCK).
+        ref_convention (str): Day-count convention of the reference rate curve (LSTC).
+        norm_step_days (float): Tree step in days for non-American bonds.
+        ame_step_days (float): Tree step in days for American bonds; also the spacing of the
+            American exercise ladder.
+        min_step_days (float): Smallest tree step allowed, in days.
+        fixing_lag_days (float): Days between the fixing date and the rate reset date.
+        calendar_country (str): Key of the holiday calendar to use.
+    """
 
     curve_folder: str
     disc_convention: str = "ACT/365"
@@ -45,15 +56,24 @@ class PricingConfig:
     norm_step_days: float = 21.0
     ame_step_days: float = 5.0
     min_step_days: float = 3.0
-    # 0 nghĩa là ngày fixing = ngày đặt lại lãi suất.  bond_schedule.build dùng
-    # `if fixing_lag_days` nên 0.0 (falsy) đi thẳng nhánh không-trừ-ngày.
+    # 0 means fixing date = rate reset date. bond_schedule.build tests `if fixing_lag_days`,
+    # so 0.0 (falsy) goes straight to the no-subtraction branch.
     fixing_lag_days: float = 0.0
     calendar_country: str = "vnd"
 
 
 @dataclass(frozen=True)
 class ModelParams:
-    """Tham số Hull-White đã hiệu chỉnh, cho cả hai nhân tố."""
+    """
+    Calibrated Hull-White parameters for both factors.
+
+    Attributes:
+        a_r (float): Mean reversion of the discount-curve factor.
+        sigma_r (float): Volatility of the discount-curve factor.
+        a_L (float): Mean reversion of the reference-curve factor.
+        sigma_L (float): Volatility of the reference-curve factor.
+        rho (float): Correlation between the two factors.
+    """
 
     a_r: float
     sigma_r: float
@@ -62,7 +82,15 @@ class ModelParams:
     rho: float = 0.0
 
     def with_vol_scale(self, k: float) -> "ModelParams":
-        """Nhân cả hai sigma với ``k``, trả về bản mới."""
+        """
+        Multiply both sigmas by ``k`` and return a new instance.
+
+        Args:
+            k (float): Scale factor applied to ``sigma_r`` and ``sigma_L``.
+
+        Returns:
+            ModelParams: A copy with scaled volatilities.
+        """
         return replace(self, sigma_r=k * self.sigma_r, sigma_L=k * self.sigma_L)
 
 
@@ -71,25 +99,41 @@ class ModelParams:
 # ---------------------------------------------------------------------------
 @dataclass
 class BondTermSheet:
-    """Một dòng term sheet cùng lát cắt lịch coupon của nó.
+    """
+    One term-sheet row together with its slice of the coupon schedule.
 
-    Tên là ``BondTermSheet`` chứ không phải ``BondSpec``: ``src/__init__.py`` đã
-    export sẵn một class tên ``BondSpec`` từ ``src.multi_hw_tree``.
+    The name is ``BondTermSheet`` rather than ``BondSpec`` because the earlier engine
+    (``src/multi_hw_tree.py``, since removed) already had a class called ``BondSpec``.
 
-    Mọi thuộc tính ở đây **độc lập với ngày định giá**.  Phần phụ thuộc ngày nằm
-    duy nhất ở :meth:`option_frames`.
+    Every attribute here is **independent of the valuation date**. The date-dependent part lives
+    only in :meth:`option_frames`.
+
+    Attributes:
+        frame (pd.DataFrame): One-row slice of ``bond_df``.
+        coupon_schedule (pd.DataFrame): All coupon periods of the bond.
+        holiday_calendar (dict): Holiday sets keyed by country.
+        cfg (PricingConfig): Model constants.
+        row (pd.Series): The single row of ``frame``.
+        bond_id (str): Bond identifier.
+        issue_date (pd.Timestamp): Issue date.
+        style (str): Option style, lower-cased (e.g. ``"american"``).
+        ref_curve_name (str | None): Reference curve name, lower-cased; ``None`` for a fixed bond.
+        maturity_date (pd.Timestamp): Maturity, adjusted following on the holiday calendar.
+        coupon_accrual (float): Coupon accrual value from the term sheet.
+        face_value (float): Face value.
+        group (str): Issuer group (TCPH).
+        reset_dates (list): Rate reset dates; empty for a fixed bond.
     """
 
     frame: pd.DataFrame
-    """Lát cắt một dòng của ``bond_df``.  Phải là DataFrame chứ không phải
-    Series: :meth:`CouponSchedule.bulid_reset_schedule` đọc nó như một khung, và
-    ``row.to_frame().T`` sẽ ép mọi cột về ``object``, đổi cách pandas diễn giải
-    ngày tháng."""
+    """One-row slice of ``bond_df``. It must be a DataFrame, not a Series:
+    :meth:`CouponSchedule.build_reset_schedule` reads it as a frame, and ``row.to_frame().T``
+    would coerce every column to ``object``, changing how pandas interprets dates."""
 
     coupon_schedule: pd.DataFrame
-    """**Toàn bộ** các kỳ trả lãi của trái phiếu, chỉ lọc theo ``bond_id``.
-    Không được lọc theo ngày định giá: ``build()`` lùi lại từ kỳ đầu tiên để dựng
-    ``accrual_start`` nên cần cả các kỳ đã qua."""
+    """**All** coupon periods of the bond, filtered only by ``bond_id``. It must not be filtered
+    by valuation date: ``build()`` steps back from the first period to construct
+    ``accrual_start``, so it needs the past periods too."""
 
     holiday_calendar: dict
     cfg: PricingConfig
@@ -107,6 +151,12 @@ class BondTermSheet:
     reset_dates: list = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
+        """
+        Derive the row-level attributes from ``frame``.
+
+        Raises:
+            ValueError: When ``frame`` does not have exactly one row.
+        """
         if len(self.frame) != 1:
             raise ValueError(
                 f"BondTermSheet cần đúng 1 dòng, nhận {len(self.frame)}"
@@ -119,11 +169,12 @@ class BondTermSheet:
         self.ref_curve_name = (
             None if pd.isna(row["ref_curve"]) else str(row["ref_curve"]).strip().lower()
         )
-        # Bản gốc truyền NGUYÊN dict holiday_calendar chứ không phải
-        # holiday_calendar.get(country, set()) như CouponSchedule làm.  Với dict
-        # rỗng hai cách cho cùng kết quả; giữ nguyên để không đổi hành vi.
+        # Same holiday calendar as CouponSchedule, so the principal date matches the last coupon
+        # date. Passing the whole dict would make `date in holidays` compare against the keys
+        # ('vnd') only, missing holidays and dodging just Saturdays/Sundays.
         self.maturity_date = adjust_following(
-            pd.to_datetime(row["maturity_date"]), self.holiday_calendar
+            pd.to_datetime(row["maturity_date"]),
+            self.holiday_calendar.get(self.cfg.calendar_country, set()),
         )
         self.coupon_accrual = float(row["coupon_accrual"])
         self.face_value = float(row["face"])
@@ -135,17 +186,34 @@ class BondTermSheet:
                 df=self.frame,
                 holiday_calendar=self.holiday_calendar,
                 country=self.cfg.calendar_country,
-            ).build_reset_schedule()  # [sic] tên sai chính tả trong repo
+            ).build_reset_schedule()
         else:
             # self.fixed_rate = [
             #     float(x) for x in str(row["annual_coupon_rate"]).split(";")
             # ]
             self.reset_dates = []
 
-    # -- dựng ---------------------------------------------------------------
+    # -- construction -------------------------------------------------------
     @classmethod
     def from_bond_df(cls, bond_df, coupon_schedule_df, holiday_calendar, cfg,
                      *, iloc=None, bond_id=None) -> "BondTermSheet":
+        """
+        Build a term sheet from one row of ``bond_df``, selected by position or by id.
+
+        Args:
+            bond_df (pd.DataFrame): All term-sheet rows.
+            coupon_schedule_df (pd.DataFrame): Coupon periods of all bonds.
+            holiday_calendar (dict): Holiday sets keyed by country.
+            cfg (PricingConfig): Model constants.
+            iloc (int | None): Row position in ``bond_df``.
+            bond_id (str | None): Bond identifier to select.
+
+        Returns:
+            BondTermSheet: The term sheet with its coupon periods filtered by ``bond_id``.
+
+        Raises:
+            ValueError: When not exactly one of ``iloc`` / ``bond_id`` is given.
+        """
         if (iloc is None) == (bond_id is None):
             raise ValueError("chỉ định đúng một trong iloc / bond_id")
         frame = (bond_df.iloc[[iloc]] if iloc is not None
@@ -158,28 +226,58 @@ class BondTermSheet:
             cfg=cfg,
         )
 
-    # -- thuộc tính suy ra --------------------------------------------------
+    # -- derived properties -------------------------------------------------
     @property
     def is_floating(self) -> bool:
+        """
+        Whether the bond references a floating rate curve.
+
+        Returns:
+            bool: True when ``ref_curve_name`` is set.
+        """
         return self.ref_curve_name is not None
 
     @property
     def is_american(self) -> bool:
+        """
+        Whether the option style is American.
+
+        Returns:
+            bool: True when ``style == "american"``.
+        """
         return self.style == "american"
 
     @property
     def step_days(self) -> float:
+        """
+        Tree step in days for this bond.
+
+        Returns:
+            float: ``cfg.ame_step_days`` for American bonds, otherwise ``cfg.norm_step_days``.
+        """
         return self.cfg.ame_step_days if self.is_american else self.cfg.norm_step_days
 
-    # -- lịch quyền chọn ----------------------------------------------------
+    # -- option schedule ----------------------------------------------------
     def option_frames(self, rpd, *, anchor=None):
-        """``(call_df, put_df)`` tại ngày định giá ``rpd``.
+        """
+        Call and put schedules at valuation date ``rpd``.
 
-        Thang quyền chọn kiểu American neo vào ``max(issue_date, anchor)``, mà
-        mặc định ``anchor = rpd`` — tái lập đúng ``max(issue_date, VALUE_DATE)``
-        của bản cũ.  Hệ quả: đổi ``rpd`` một ngày làm **toàn bộ** thang dịch một
-        ngày, nên lưới đổi và giá lệch một lượng cỡ sàn nhiễu rời rạc hoá.  Module
-        hiệu chỉnh nên truyền ``anchor=spec.issue_date`` để thang cố định.
+        The American exercise ladder is anchored at ``max(issue_date, anchor)``, and by default
+        ``anchor = rpd``, which reproduces the old ``max(issue_date, VALUE_DATE)`` exactly. The
+        consequence: moving ``rpd`` by one day shifts the **whole** ladder by one day, so the grid
+        changes and the price moves by roughly the discretisation noise floor. The calibration
+        module should pass ``anchor=spec.issue_date`` to keep the ladder fixed.
+
+        Explicit exercise dates are read from ``call_exercise_dates`` / ``put_exercise_dates``
+        (``;``-separated, ``%m/%d/%Y``). Strikes are expressed as a fraction of face value.
+
+        Args:
+            rpd (pd.Timestamp): Valuation date.
+            anchor (pd.Timestamp | None): Start of the American ladder; defaults to ``rpd``.
+
+        Returns:
+            tuple[pd.DataFrame, pd.DataFrame]: ``(call_df, put_df)`` with columns
+            ``call_date``/``call_strike`` and ``put_date``/``put_strike``.
         """
         rpd = pd.Timestamp(rpd)
         anchor = rpd if anchor is None else pd.Timestamp(anchor)
@@ -187,6 +285,7 @@ class BondTermSheet:
         freq = f"{str(self.cfg.ame_step_days)}D"
 
         def ladder(strike_col):
+            """Evenly spaced American exercise dates with a constant strike."""
             dates = pd.date_range(
                 start=max(self.issue_date, anchor),
                 end=self.maturity_date,
@@ -195,6 +294,7 @@ class BondTermSheet:
             return dates, [float(row[strike_col]) / face] * len(dates)
 
         def explicit(date_col, strike_col):
+            """Exercise dates and strikes listed explicitly in the term sheet."""
             dates = [pd.to_datetime(x.strip(), format="%m/%d/%Y")
                      for x in str(row[date_col]).split(";")]
             return dates, [float(x) / face for x in str(row[strike_col]).split(";")]
@@ -227,7 +327,7 @@ class BondTermSheet:
 
 
 # ---------------------------------------------------------------------------
-# Đường cong: làm mịn lưới và dịch trạng thái x
+# Curves: grid refinement and shifting the x state
 # ---------------------------------------------------------------------------
 _FINE_MAX_YEARS = 30.0
 _FINE_POINTS = 1500
@@ -235,16 +335,26 @@ _FINE_POINTS = 1500
 
 def refine_curve(curve: YieldCurve, *, max_years=_FINE_MAX_YEARS,
                  n_points=_FINE_POINTS, tol=1e-9) -> YieldCurve:
-    """Cùng một đường cong, trên lưới dày hơn — bảo toàn giá trị tới 1 ULP.
+    """
+    The same curve on a denser grid, preserving values to within 1 ULP.
 
-    ``YieldCurve`` nội suy tuyến tính trong không gian lãi suất zero và ngoại suy
-    phẳng.  Nội suy tuyến tính một hàm tuyến tính từng khúc trên lưới *chứa* mọi
-    nút gốc cho lại đúng hàm đó về mặt toán học.
+    ``YieldCurve`` interpolates linearly in zero-rate space and extrapolates flat. Linearly
+    interpolating a piecewise-linear function on a grid that *contains* every original node gives
+    back exactly the same function, mathematically.
 
-    Đo được: tại chính các pillar gốc kết quả trùng khớp tuyệt đối; giữa các
-    pillar lệch đúng **1 ULP** (1,4e−17 tuyệt đối, 2,2e−16 tương đối) do
-    ``np.interp`` làm tròn khác khi đi qua điểm lưới trung gian.  Đây là sai số
-    nhỏ nhất có thể của phép làm mịn, không phải chỗ nới lỏng được.
+    Measured: at the original pillars the result matches exactly; between pillars it differs by
+    exactly **1 ULP** (1.4e-17 absolute, 2.2e-16 relative) because ``np.interp`` rounds differently
+    when it passes through an intermediate grid point. This is the smallest possible error of the
+    refinement, not something that can be loosened.
+
+    Args:
+        curve (YieldCurve): Curve to refine.
+        max_years (float): Last point of the geometric fine grid, in years.
+        n_points (int): Number of points in the fine grid.
+        tol (float): Fine points closer than this to an original node are dropped.
+
+    Returns:
+        YieldCurve: Curve on the union of the original nodes and the fine grid.
     """
     mats = np.asarray(curve.maturities, float)
     fine = np.geomspace(1.0 / 365.0, max_years, n_points)
@@ -254,22 +364,31 @@ def refine_curve(curve: YieldCurve, *, max_years=_FINE_MAX_YEARS,
 
 
 def shift_x(curve: YieldCurve, a: float, delta: float, *, refine=True) -> YieldCurve:
-    """Dịch nhân tố Hull-White ``x`` đi ``delta``, thể hiện trên đường cong::
+    """
+    Shift the Hull-White factor ``x`` by ``delta``, expressed on the curve::
 
         P(0,T)  ->  P(0,T) · exp(−B_a(T)·delta)
         R(T)    ->  R(T) + delta · B_a(T)/T
 
-    Phần bù **không phẳng**: hệ số truyền ``B_a(T)/T`` bằng 1 ở đầu ngắn và tiến
-    về ``1/(aT)`` ở đầu dài.
+    The spread is **not flat**: the transmission factor ``B_a(T)/T`` equals 1 at the short end and
+    tends to ``1/(aT)`` at the long end.
 
-    Lưới mịn là **bắt buộc**, không phải tinh chỉnh: ``B_a(T)/T`` là hàm cong còn
-    ``YieldCurve`` nội suy tuyến tính, nên áp phần bù chỉ tại 18 pillar rồi để
-    ``np.interp`` lo phần còn lại sẽ lệch tới vài bp giữa các pillar thưa ở đầu
-    dài.  Khi đó phép hiệu chỉnh spread hội tụ về sai số nội suy chứ không về giá
-    thị trường.
+    The fine grid is **mandatory**, not a nicety: ``B_a(T)/T`` is curved while ``YieldCurve``
+    interpolates linearly, so applying the spread only at the 18 pillars and leaving the rest to
+    ``np.interp`` would be off by up to a few bp between the sparse long-end pillars. The spread
+    calibration would then converge to the interpolation error rather than to the market price.
 
-    ``delta == 0`` trả về **chính** object cũ, không đụng gì — nhờ vậy mọi đường
-    đi hiện có giữ nguyên từng bit.
+    ``delta == 0`` returns the **same** object untouched, so every existing path stays
+    bit-identical.
+
+    Args:
+        curve (YieldCurve): Curve to shift.
+        a (float): Hull-White mean reversion of the factor.
+        delta (float): Shift of ``x``.
+        refine (bool): Refine the grid with :func:`refine_curve` before shifting.
+
+    Returns:
+        YieldCurve: The shifted curve, or ``curve`` itself when ``delta`` is zero.
     """
     if not delta:
         return curve
@@ -278,15 +397,24 @@ def shift_x(curve: YieldCurve, a: float, delta: float, *, refine=True) -> YieldC
 
 
 # ---------------------------------------------------------------------------
-# Ánh xạ đường cong tại một ngày, kèm chặn fallback im lặng
+# Mapping curves at a date, with a guard against silent fallback
 # ---------------------------------------------------------------------------
 def assert_curve_covers(rpd, df, label: str) -> None:
-    """Nổ nếu ``rpd`` sớm hơn mọi dòng của ``df``.
+    """
+    Fail if ``rpd`` is earlier than every row of ``df``.
 
-    ``MapCurve.map_curve`` tụt về ``df.index.min()`` mà **không báo gì** khi không
-    có dòng nào ``<= rpd``.  Ở ``VALUE_DATE`` điều đó không bao giờ xảy ra; ở ngày
-    quan sát giá trong quá khứ thì có, và nó biến "không có dữ liệu" thành một con
-    số trông rất hợp lý.  Chặn ở đây thay vì sửa ``MapCurve``.
+    ``MapCurve.map_curve`` falls back to ``df.index.min()`` **silently** when no row is
+    ``<= rpd``. At ``VALUE_DATE`` that never happens; at a past price observation date it does, and
+    it turns "no data" into a number that looks perfectly plausible. The guard lives here instead
+    of changing ``MapCurve``.
+
+    Args:
+        rpd (pd.Timestamp): Date the curve is mapped at.
+        df (pd.DataFrame): Curve history indexed by date.
+        label (str): Curve name used in the error message.
+
+    Raises:
+        ValueError: When ``rpd`` is before the first row of ``df``.
     """
     start = pd.Timestamp(pd.DatetimeIndex(df.index).min())
     if pd.Timestamp(rpd) < start:
@@ -296,14 +424,21 @@ def assert_curve_covers(rpd, df, label: str) -> None:
         )
 
 
-def selected_fixing(spec: BondTermSheet, rpd, *, reading="advance"):
-    """Ngày fixing mà ``build()`` sẽ chọn cho kỳ coupon tương lai đầu tiên.
+def selected_fixing(spec: BondTermSheet, rpd):
+    """
+    The fixing date ``build()`` will pick for the first future coupon period.
 
-    Nhân bản logic ở ``bond_schedule.build`` để chặn trước được; nếu hàm đó đổi
-    thì bản sao này phải đổi theo.  Trả ``None`` khi không áp dụng.— bao gồm cả
-    trường hợp kỳ tương lai gần nhất vẫn đang ở giai đoạn fixed của một bond
-    chuyển đổi (đọc ``coupon_type`` từ ``spec.coupon_schedule`` để biết, không
-    còn dùng ``spec.is_floating`` làm đại diện).
+    Replicates the logic in ``bond_schedule.build`` so it can be guarded up front; if that function
+    changes, this copy must change with it. Returns ``None`` when it does not apply — including
+    when the nearest future period is still in the fixed phase of a switching bond (read from
+    ``coupon_type`` in ``spec.coupon_schedule``, no longer using ``spec.is_floating`` as a proxy).
+
+    Args:
+        spec (BondTermSheet): The bond.
+        rpd (pd.Timestamp): Valuation date.
+
+    Returns:
+        pd.Timestamp | None: The fixing date, net of ``cfg.fixing_lag_days``, or ``None``.
     """
     if not spec.is_floating:
         return None
@@ -315,9 +450,7 @@ def selected_fixing(spec: BondTermSheet, rpd, *, reading="advance"):
     first = future.iloc[0]
     if first["coupon_type"] != "float":
         return None
-    pay = first["pay_date"]
-    cands = [r for r in spec.reset_dates
-             if (r < pay if reading == "advance" else r <= pay)]
+    cands = [r for r in spec.reset_dates if r <= first["start_date"]]
     if not cands:
         return None
     sel = max(cands)
@@ -326,15 +459,32 @@ def selected_fixing(spec: BondTermSheet, rpd, *, reading="advance"):
 
 
 def map_curves(spec, rpd, disc_df, ref_df, *, require_curve_history=False):
-    """DataFrame đường cong -> ``(disc_curve, ref_curve)`` tại ``rpd``."""
+    """
+    Curve DataFrames -> ``(disc_curve, ref_curve)`` at ``rpd``.
+
+    Args:
+        spec (BondTermSheet): The bond; supplies conventions and the fixing date.
+        rpd (pd.Timestamp): Valuation date.
+        disc_df (pd.DataFrame): Discount curve (LSCK) history.
+        ref_df (pd.DataFrame | None): Reference rate curve (LSTC) history; ``None`` for a fixed
+            bond.
+        require_curve_history (bool): Guard with :func:`assert_curve_covers` that both curves
+            (and the reference curve at the fixing date) have data on or before the date.
+
+    Returns:
+        tuple: ``(disc_curve, ref_curve)``; ``ref_curve`` is ``None`` when ``ref_df`` is.
+
+    Raises:
+        ValueError: When ``require_curve_history`` is set and a curve has no history that early.
+    """
     if require_curve_history:
         assert_curve_covers(rpd, disc_df, "đường chiết khấu")
         if ref_df is not None:
             assert_curve_covers(rpd, ref_df, "đường tham chiếu")
             fix = selected_fixing(spec, rpd)
             if fix is not None:
-                # get_known_rate map lại đường tham chiếu tại ngày fixing, vốn
-                # sớm hơn rpd — đây là chỗ fallback dễ kích hoạt nhất.
+                # get_known_rate re-maps the reference curve at the fixing date, which is earlier
+                # than rpd; this is where the fallback is most likely to trigger.
                 assert_curve_covers(fix, ref_df, "đường tham chiếu @fixing")
     cfg = spec.cfg
     disc_curve = MapCurve(
@@ -348,22 +498,39 @@ def map_curves(spec, rpd, disc_df, ref_df, *, require_curve_history=False):
 
 
 # ---------------------------------------------------------------------------
-# Dựng lịch, dựng chân, dựng cây
+# Build the schedule, the legs and the tree
 # ---------------------------------------------------------------------------
-def build_schedule(spec, rpd, *, reading="advance", apply_floor=True,
-                   apply_cap=True, ref_df=None, call_df=None, put_df=None,
-                   option_anchor=None, ref_df_raw = None):
-    """Thay closure ``build_sched`` của bản cũ; mọi biến nâng lên tham số."""
+def build_schedule(spec, rpd, *, apply_floor=True,
+                   apply_cap=True, call_df=None, put_df=None,
+                   option_anchor=None, ref_df_raw=None):
+    """
+    Build the cash-flow schedule of ``spec`` at ``rpd``.
+
+    Replaces the old ``build_sched`` closure; every captured variable is now a parameter.
+
+    Args:
+        spec (BondTermSheet): The bond.
+        rpd (pd.Timestamp): Valuation date.
+        apply_floor (bool): Apply the coupon floor.
+        apply_cap (bool): Apply the coupon cap.
+        call_df (pd.DataFrame | None): Call schedule; from :meth:`BondTermSheet.option_frames`
+            when omitted.
+        put_df (pd.DataFrame | None): Put schedule; from :meth:`BondTermSheet.option_frames`
+            when omitted.
+        option_anchor (pd.Timestamp | None): Anchor of the American exercise ladder.
+        ref_df_raw (pd.DataFrame | None): Raw reference curve data, passed through to ``build``.
+
+    Returns:
+        The schedule returned by ``bond_schedule.build``.
+    """
     if call_df is None or put_df is None:
         c, p = spec.option_frames(rpd, anchor=option_anchor)
         call_df = c if call_df is None else call_df
         put_df = p if put_df is None else put_df
     return build(
-        reading=reading,
         rpd=rpd,
         face=spec.face_value,
         maturity_date=spec.maturity_date,
-        coupon_accrual=spec.coupon_accrual,
         coupon_schedule_df=spec.coupon_schedule,
         ref_dates=spec.reset_dates,
         call_df=call_df,
@@ -375,55 +542,72 @@ def build_schedule(spec, rpd, *, reading="advance", apply_floor=True,
         ref_convention=spec.cfg.ref_convention,
         apply_floor=apply_floor,
         apply_cap=apply_cap,
-        ref_df=ref_df,
-        ref_df_raw = ref_df_raw
+        ref_df_raw=ref_df_raw,
     )
 
 
-def _align_bump(src_curve, bump, dst_curve):
-    """Bump vô hướng đi thẳng; bump theo pillar phải nội suy sang lưới đích."""
-    if np.isscalar(bump):
-        return float(bump)
-    b = np.asarray(bump, float)
-    if b.shape == dst_curve.maturities.shape:
-        return b
-    return np.interp(dst_curve.maturities, src_curve.maturities, b)
-
-
-def build_legs(disc_curve, ref_curve, params, cfg, *, disc_bump=0.0,
-               ref_bump=0.0, disc_delta=0.0, ref_delta=0.0, refine=True):
-    """Thay hàm ``legs`` của bản cũ, thêm đường dịch trong không gian ``x``.
-
-    ``*_bump``  — cộng thẳng vào lãi suất zero (vô hướng hoặc mảng theo pillar).
-    ``*_delta`` — dịch nhân tố ``x``, sinh ra phần bù cong ``δ·B_a(τ)/τ``.
-
-    Hai thứ **khác đơn vị lẫn hình dạng**; truyền nhầm sẽ ra kết quả sai mà không
-    có lỗi nào báo.  Vector bump được dựng ở đây chứ không ở nơi gọi, vì chỉ ở đây
-    mới biết chắc ``a_r`` đi với đường chiết khấu còn ``a_L`` đi với đường tham
-    chiếu.
-
-    Với ``disc_delta = ref_delta = 0`` — mọi lời gọi của pipeline hiện tại — hàm
-    này thực hiện đúng hai phép ``.shifted()`` y như bản cũ.
+def build_legs(disc_curve, ref_curve, params, cfg, *, disc_delta=0.0,
+               ref_delta=0.0, refine=True):
     """
-    disc_base = shift_x(disc_curve, params.a_r, disc_delta, refine=refine)
-    disc = disc_base.shifted(_align_bump(disc_curve, disc_bump, disc_base))
+    Build the discount and reference curve legs, with an optional shift in ``x`` space.
+
+    Replaces the old ``legs`` function. ``*_delta`` shifts the factor ``x`` (OAS / Tier-2 capital
+    spread), producing a curved spread ``δ·B_a(τ)/τ`` on the zero rates — not a flat additive
+    spread. The shift lives here because only here is it certain that ``a_r`` goes with the
+    discount curve and ``a_L`` with the reference curve.
+
+    Args:
+        disc_curve (YieldCurve): Discount curve (LSCK).
+        ref_curve (YieldCurve | None): Reference rate curve (LSTC); ``None`` for a fixed bond.
+        params (ModelParams): Hull-White parameters.
+        cfg (PricingConfig): Model constants.
+        disc_delta (float): Shift of the discount factor ``x``.
+        ref_delta (float): Shift of the reference factor ``x``.
+        refine (bool): Refine the grid before shifting (see :func:`shift_x`).
+
+    Returns:
+        tuple[CurveLeg, CurveLeg | None]: ``(disc_leg, ref_leg)``; ``ref_leg`` is ``None`` when
+        ``ref_curve`` is.
+    """
+    disc = shift_x(disc_curve, params.a_r, disc_delta, refine=refine)
     disc_leg = CurveLeg(disc, params.a_r, params.sigma_r, cfg.disc_convention)
     if ref_curve is None:
         return disc_leg, None
-    ref_base = shift_x(ref_curve, params.a_L, ref_delta, refine=refine)
-    ref = ref_base.shifted(_align_bump(ref_curve, ref_bump, ref_base))
+    ref = shift_x(ref_curve, params.a_L, ref_delta, refine=refine)
     return disc_leg, CurveLeg(ref, params.a_L, params.sigma_L, cfg.ref_convention)
 
 
-def build_tree(spec, rpd, *, disc_df, params, ref_df=None, reading="advance",
+def build_tree(spec, rpd, *, disc_df, params, ref_df=None,
                apply_floor=True, apply_cap=True, step_days=None, min_step=None,
-               option_anchor=None, disc_bump=0.0, ref_bump=0.0, disc_delta=0.0,
+               option_anchor=None, disc_delta=0.0,
                ref_delta=0.0, refine_on_delta=True,
                require_curve_history=False, sched=None, ref_df_raw=None):
-    """Một dòng term sheet + một ngày ``rpd`` -> ``(CompiledBond, CallPutTree)``.
+    """
+    One term-sheet row + one date ``rpd`` -> ``(CompiledBond, CallPutTree)``.
 
-    Thứ tự thao tác giữ đúng bản cũ — map đường cong, dựng lịch, compile, dựng
-    chân — nên thứ tự các dòng cảnh báo in ra cũng không đổi.
+    The order of operations matches the old version — map curves, build schedule, compile, build
+    legs — so the order of printed warning lines is unchanged too.
+
+    Args:
+        spec (BondTermSheet): The bond.
+        rpd (pd.Timestamp): Valuation date.
+        disc_df (pd.DataFrame): Discount curve (LSCK) history.
+        params (ModelParams): Hull-White parameters.
+        ref_df (pd.DataFrame | None): Reference rate curve (LSTC) history.
+        apply_floor (bool): Apply the coupon floor.
+        apply_cap (bool): Apply the coupon cap.
+        step_days (float | None): Tree step; defaults to ``spec.step_days``.
+        min_step (float | None): Minimum tree step; defaults to ``cfg.min_step_days``.
+        option_anchor (pd.Timestamp | None): Anchor of the American exercise ladder.
+        disc_delta (float): Shift of the discount factor ``x``.
+        ref_delta (float): Shift of the reference factor ``x``.
+        refine_on_delta (bool): Refine the curve grid when shifting.
+        require_curve_history (bool): Guard against the silent ``MapCurve`` fallback.
+        sched (optional): Pre-built schedule; built with :func:`build_schedule` when omitted.
+        ref_df_raw (pd.DataFrame | None): Raw reference curve data, passed through to ``build``.
+
+    Returns:
+        tuple[CompiledBond, CallPutTree]: The compiled bond and its single- or multi-curve tree.
     """
     cfg = spec.cfg
     disc_curve, ref_curve = map_curves(
@@ -431,9 +615,9 @@ def build_tree(spec, rpd, *, disc_df, params, ref_df=None, reading="advance",
     )
     if sched is None:
         sched = build_schedule(
-            spec, rpd, reading=reading, apply_floor=apply_floor,
-            apply_cap=apply_cap, ref_df=ref_df, option_anchor=option_anchor,
-            ref_df_raw=ref_df_raw
+            spec, rpd, apply_floor=apply_floor,
+            apply_cap=apply_cap, option_anchor=option_anchor,
+            ref_df_raw=ref_df_raw,
         )
     bond = compile_bond(
         sched,
@@ -442,7 +626,6 @@ def build_tree(spec, rpd, *, disc_df, params, ref_df=None, reading="advance",
     )
     disc_leg, ref_leg = build_legs(
         disc_curve, ref_curve, params, cfg,
-        disc_bump=disc_bump, ref_bump=ref_bump,
         disc_delta=disc_delta, ref_delta=ref_delta, refine=refine_on_delta,
     )
     if ref_leg is None:
@@ -452,6 +635,19 @@ def build_tree(spec, rpd, *, disc_df, params, ref_df=None, reading="advance",
 
 @dataclass(frozen=True)
 class PricingResult:
+    """
+    Result of pricing one bond at one valuation date.
+
+    Attributes:
+        bond_id (str): Bond identifier.
+        rpd (pd.Timestamp): Valuation date.
+        full_price (float): Price with the embedded options.
+        straight_price (float): Price without the options.
+        diff (float): ``full_price - straight_price``.
+        bond (object): The compiled bond, for inspection.
+        tree (object): The ``CallPutTree`` that produced ``full_price``.
+    """
+
     bond_id: str
     rpd: pd.Timestamp
     full_price: float
@@ -462,11 +658,20 @@ class PricingResult:
 
 
 def price_bond(spec, rpd, **kw) -> PricingResult:
-    """Định giá đầy đủ: giá có quyền chọn, giá straight, và chênh lệch.
+    """
+    Full pricing: the price with options, the straight price, and the difference.
 
-    Giữ nguyên hai lời gọi riêng ``price()`` và ``decompose()`` như bản cũ.
-    ``decompose()`` tự tính lại ``full`` nên về mặt số học có thể gộp, nhưng gộp
-    là một thay đổi cần chứng minh còn giữ nguyên thì không.
+    Keeps the two separate calls ``price()`` and ``decompose()`` as in the old version.
+    ``decompose()`` recomputes ``full`` itself, so numerically they could be merged, but merging is
+    a change that needs proving while keeping them does not.
+
+    Args:
+        spec (BondTermSheet): The bond.
+        rpd (pd.Timestamp): Valuation date.
+        **kw: Passed through to :func:`build_tree`.
+
+    Returns:
+        PricingResult: Full and straight prices from the same tree.
     """
     bond, tree = build_tree(spec, rpd, **kw)
     full = tree.price()
@@ -478,31 +683,47 @@ def price_bond(spec, rpd, **kw) -> PricingResult:
 
 def price_bond_layered(spec, rpd, *, delta_full, delta_straight,
                        **kw) -> PricingResult:
-    """Giá có quyền chọn và giá straight trên **hai đường chiết khấu khác nhau**.
+    """
+    The price with options and the straight price on **two different discount curves**.
 
-    ``price_bond`` lấy cả hai số từ một cây, nên cả hai nằm trên cùng một đường.
-    Ở đây hai chân cố tình tách:
+    ``price_bond`` takes both numbers from one tree, so both sit on the same curve. Here the two
+    legs are deliberately split:
 
     ====================  ==================  ======================
-    Loại                  ``delta_full``      ``delta_straight``
+    Type                  ``delta_full``      ``delta_straight``
     ====================  ==================  ======================
-    Không tăng vốn        ``OAS``             ``0``
-    Tăng vốn              ``OAS + delta``     ``delta``
+    Not Tier-2 capital    ``OAS``             ``0``
+    Tier-2 capital        ``OAS + delta``     ``delta``
     ====================  ==================  ======================
 
-    Đường `LB_G*` dựng từ trái phiếu **không quyền chọn**, nên nó đúng là đường
-    cho chân straight; chân có quyền chọn phải cộng thêm ``OAS`` để khớp giá thị
-    trường của chính trái phiếu có quyền chọn đó.  Hàng dưới đúng bằng "cây tăng
-    vốn có quyền chọn **trừ** ``OAS``".
+    The `LB_G*` curve is built from **option-free** bonds, so it is exactly the right curve for
+    the straight leg; the leg with options must add ``OAS`` to match the market price of that
+    optioned bond itself. The bottom row is exactly "the Tier-2 capital tree with options
+    **minus** ``OAS``".
 
-    **Hệ quả cần biết khi đọc kết quả**: ``diff = full - straight`` nay gồm cả
-    giá trị quyền chọn **lẫn** phần chênh do ``OAS``, không còn là giá trị quyền
-    chọn thuần.  Đẳng thức phân rã của ``decompose()`` chỉ còn đúng trên một
-    đường, nên đừng đem ``diff`` ở đây ghép với các cấu phần của ``decompose()``.
+    **Consequence to keep in mind when reading results**: ``diff = full - straight`` now contains
+    both the option value **and** the difference due to ``OAS``; it is no longer the pure option
+    value. The ``decompose()`` identity only holds on a single curve, so do not combine ``diff``
+    here with the components of ``decompose()``.
 
-    Hai cây dùng chung hình học lưới: :class:`FactorLattice` chỉ đọc ``a``,
-    ``sigma`` và lưới ngày, **không đọc đường cong**.  Nhờ vậy sai số rời rạc hoá
-    vẫn triệt tiêu khi lấy hiệu, đúng như khi cả hai chân ở trên một cây.
+    The two trees share the lattice geometry: :class:`FactorLattice` reads only ``a``, ``sigma``
+    and the date grid, **not the curve**. So the discretisation error still cancels when taking
+    the difference, just as when both legs are on one tree.
+
+    Args:
+        spec (BondTermSheet): The bond.
+        rpd (pd.Timestamp): Valuation date.
+        delta_full (float): Discount-factor shift for the leg with options.
+        delta_straight (float): Discount-factor shift for the straight leg.
+        **kw: Passed through to :func:`build_tree` (must not contain ``disc_delta``).
+
+    Returns:
+        PricingResult: ``full_price`` and ``tree`` from the ``delta_full`` tree; ``straight_price``
+        from the ``delta_straight`` tree.
+
+    Raises:
+        TypeError: When ``disc_delta`` is passed in ``kw``.
+        AssertionError: When the two trees do not share the same date grid.
     """
     if "disc_delta" in kw:
         raise TypeError(
@@ -515,10 +736,9 @@ def price_bond_layered(spec, rpd, *, delta_full, delta_straight,
     full = tree.price()
 
     if d_full == d_straight:
-        # Một đường -> một cây. Nhánh này cho ra ĐÚNG hai con số của
-        # `price_bond`, vì `decompose()["straight"]` chính là
-        # `price(PricingFlags.none())`. Đó là cổng hồi quy: khi chưa có OAS,
-        # kết quả phải trùng bản cũ từng bit.
+        # One curve -> one tree. This branch yields EXACTLY the two numbers of `price_bond`,
+        # because `decompose()["straight"]` is `price(PricingFlags.none())`. It is the regression
+        # gate: with no OAS, the result must match the old version bit for bit.
         straight = tree.price(PricingFlags.none())
     else:
         bond_s, tree_s = build_tree(spec, rpd, disc_delta=d_straight, **kw)

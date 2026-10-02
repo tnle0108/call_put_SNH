@@ -87,7 +87,7 @@ class CouponPeriod:
     fixed_rate: float | None = None
     fixing_day: int | None = None
     margin: float = 0.0
-    ref_tenor_years: int | None = None
+    ref_tenor_years: float | None = None
     ref_delta: float | None = None
     floor: float | None = None
     cap: float | None = None
@@ -120,7 +120,7 @@ class CouponPeriod:
                     f"floating period paying at {self.pay_day} needs ref_tenor_days"
                 )
             if self.ref_delta is None:
-                self.ref_delta = self.ref_tenor_years 
+                self.ref_delta = self.ref_tenor_years
         else:
             if self.floor is not None or self.cap is not None:
                 raise ValueError(
@@ -135,6 +135,10 @@ class CouponPeriod:
     @property
     def is_float(self) -> bool:
         return self.fixed_rate is None
+
+    @property
+    def ref_tenor_days(self) -> int:
+        return int(self.ref_tenor_years * 365)
 
 
 @dataclass

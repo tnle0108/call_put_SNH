@@ -1,8 +1,9 @@
-"""Bảng kỳ hạn chuẩn và bootstrap đường zero từ báo giá YTM.
+"""
+Standard tenor grid and bootstrapping of zero curves from YTM quotes.
 
-Tên file là di sản: lớp ``BufferYTM`` dựng đường Tier 2 bằng cách đắp buffer
-lên VBMA đã bị xoá, vì phần bù tăng vốn nay là ``delta`` trên ``x(t)`` dò ngược
-từ giá quan sát (``src/tier2_spread.py``).
+The file name is a legacy: the ``BufferYTM`` class, which built the Tier 2 curve by adding a buffer
+on top of VBMA, has been deleted, because the Tier 2 (capital bond) premium is now a ``delta`` on
+``x(t)`` backed out from observed prices (``src/tier2_spread.py``).
 """
 import pandas as pd
 import sys
@@ -36,10 +37,19 @@ TENOR_MONTHS = {
 tenor_order = list(TENOR_MONTHS.keys())
 
 def calc_zyc_df(ytm_df: pd.DataFrame) -> pd.DataFrame:
-    """Bootstrap báo giá YTM của một phân nhóm TCPH thành đường zero.
+    """
+    Bootstrap the YTM quotes of one issuer group (TCPH) into a zero curve.
 
-    Đường chiết khấu luôn là đường của phân nhóm, kể cả với trái phiếu tăng
-    vốn — phần bù tăng vốn vào sau, ở không gian ``x(t)``.
+    The discount curve is always the issuer group's curve, even for Tier 2 capital bonds: the Tier
+    2 premium comes in later, in ``x(t)`` space.
+
+    Args:
+        ytm_df (pd.DataFrame): YTM quotes, one row per date (the index), passed to BenchmarkCurve
+            "FI ZYC VND" as benchmark prices.
+
+    Returns:
+        pd.DataFrame: Zero rates, one row per date (index named "Date") and one column per tenor
+        in TENOR_MONTHS order.
     """
     order = tenor_order
     benchmark_curve = BenchmarkCurve(

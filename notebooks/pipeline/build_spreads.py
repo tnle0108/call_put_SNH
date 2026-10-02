@@ -1,45 +1,46 @@
 #%%
-"""Dựng **hai** bảng phần bù từ giá dirty quan sát được, theo đúng thứ tự.
+"""
+Build the **two** spread tables from observed dirty prices, in the required order.
 
-Chạy TRƯỚC ``main_v2.py``, mỗi khi một trong hai file quan sát có dòng mới::
+Run BEFORE ``main_v2.py``, whenever either observation file gets new rows::
 
     cd notebooks/pipeline && python build_spreads.py
 
-Hai tầng, cộng dồn trong không gian ``x(t)``::
+Two layers, additive in ``x(t)`` space::
 
-    Chặng 1   OAS   = phần bù của trái phiếu KHÔNG tăng vốn CÓ quyền chọn,
-                      so với đường LSCK nhóm (vốn dựng từ trái phiếu không
-                      quyền chọn). Nền: đường nhóm trần.
-    Chặng 2   delta = phần bù thêm của trái phiếu TĂNG VỐN có quyền chọn.
-                      Nền: đường nhóm ĐÃ CỘNG OAS.
+    Stage 1   OAS   = spread of NON-Tier-2 bonds WITH options over the group's LSCK
+                      (discount) curve, which is itself built from option-free bonds.
+                      Base: the bare group curve.
+    Stage 2   delta = additional spread of callable TIER-2 bonds.
+                      Base: the group curve WITH OAS ADDED.
 
-Định giá dùng bốn tổ hợp::
+Pricing uses four combinations::
 
-    Không tăng vốn   full = OAS          straight = 0
-    Tăng vốn         full = OAS + delta  straight = delta
+    Non-Tier-2   full = OAS          straight = 0
+    Tier-2       full = OAS + delta  straight = delta
 
-Hàng dưới đúng bằng "cây tăng vốn có quyền chọn **trừ** OAS".
+The bottom row equals "the callable Tier-2 tree **minus** OAS".
 
-**Thứ tự là bắt buộc** — chặng 2 lấy kết quả chặng 1 làm nền — nên hai chặng nằm
-chung một script thay vì hai file phải nhớ chạy đúng thứ tự.
+**The order is mandatory** (stage 2 uses stage 1's result as its base), so both stages live
+in one script rather than two files that must be remembered to run in the right order.
 
-Kết xuất vào ``datasets/spread/``, mỗi tầng bốn file:
+Output goes to ``datasets/spread/``, four files per layer:
 
 ``{nontier2_oas,tier2_spread}_monthly.csv``
-    Bảng chính. Giá trị là lượng dịch **biến trạng thái x(t)**, KHÔNG phải spread
-    cộng thẳng vào lãi suất zero. ``main_v2.py`` đọc đúng hai file này.
+    The main table. Values are shifts of the **state variable x(t)**, NOT spreads added
+    directly to zero rates. ``main_v2.py`` reads exactly these two files.
 ``*_zero_equivalent.csv``
-    Bảng phái sinh ``· B_a(tau)/tau``: phần bù thực tế trên đường cong, suy giảm
-    theo kỳ hạn. Dùng cho báo cáo và đối chiếu, KHÔNG dùng để định giá.
+    Derived table ``· B_a(tau)/tau``: the actual spread on the curve, decaying with tenor.
+    Used for reporting and reconciliation, NOT for pricing.
 ``*_provenance.csv``
-    Mỗi tháng một dòng: giá trị, ``observed`` hay ``carry:<tháng>``, **số quan
-    sát** và **tổng mệnh giá** đứng sau. Hai cột sau là thứ phải đọc cùng — một
-    tháng "có quan sát" dựa trên một giao dịch duy nhất không đáng tin như một
-    tháng có năm giao dịch, và bảng chính không thể hiện được khác biệt đó.
+    One row per month: the value, ``observed`` or ``carry:<month>``, and the **number of
+    observations** and **total par value** behind it. The last two columns must be read
+    together: an "observed" month resting on a single trade is not as reliable as a month
+    with five trades, and the main table cannot show that difference.
 ``*_calibrated.csv``
-    Cache theo nội dung, khoá ``(bond_id, obs_date, price_hash)``.
+    Content-keyed cache, key ``(bond_id, obs_date, price_hash)``.
 
-Phương pháp luận: ``Phuong_phap_luan_spread_trai_phieu_tang_von.html``.
+Methodology: ``Phuong_phap_luan_spread_trai_phieu_tang_von.html``.
 """
 import json
 import os
@@ -48,6 +49,10 @@ from pathlib import Path
 
 import pandas as pd
 
+try:
+    os.chdir(Path(__file__).resolve().parent)
+except NameError:
+    pass
 sys.path.insert(0, str(Path.cwd().parents[1]))
 
 from src.bond_pricer import ModelParams, PricingConfig                # noqa: E402
@@ -63,26 +68,26 @@ root = Path.cwd().resolve().parent.parent
 BOND_FOLDER_PATH = os.path.join(root, 'datasets', 'raw')
 CURVE_FOLDER_PATH = os.path.join(root, 'datasets', 'curve')
 SPREAD_FOLDER_PATH = os.path.join(root, 'datasets', 'spread')
-HOLIDAY_FOLDER_PATH = Path.cwd().parents[1] / "datasets" / "holidays"
+HOLIDAY_FOLDER_PATH = os.path.join(root, 'datasets', 'holiday')
 HULLWHITE_FILE_PATH = os.path.join(root, 'specs', 'hullwhite.json')
 
-# Tháng cuối của bảng spread. Phải bằng VALUE_DATE của main_v2.py, nếu không
-# `delta_for_bond` sẽ báo thiếu tháng.
+# Last month of the spread table. Must equal VALUE_DATE in main_v2.py, otherwise
+# `delta_for_bond` reports a missing month.
 VALUE_DATE = pd.to_datetime('2026-03-31')
 
-# Nguồn DUY NHẤT của (a, sigma) cho mọi phân nhóm tổ chức phát hành.
+# The SINGLE source of (a, sigma) for every issuer group (TCPH).
 #
-# Đường ZYC của từng nhóm được dựng bằng "đường cơ bản + margin", mà margin thì
-# cập nhật không đều. Hiệu chỉnh Hull-White trực tiếp trên đường nhóm vì vậy cho
-# (a, sigma) không tin cậy — nó bắt cả nhiễu của margin. Mô hình lấy (a, sigma)
-# hiệu chỉnh trên đường cơ bản, còn phần MỨC lãi suất vẫn khớp vào đúng đường
-# nhóm qua bước quy nạp tiến Arrow-Debreu.
+# Each group's ZYC curve is built as "base curve + margin", and the margins are updated
+# irregularly. Calibrating Hull-White directly on a group curve therefore gives unreliable
+# (a, sigma), because it also picks up the margin noise. The model takes (a, sigma)
+# calibrated on the base curve, while the rate LEVEL is still fitted to the right group
+# curve through the Arrow-Debreu forward induction.
 #
-# Nói cách khác: động học vay của đường cơ bản, mức lấy của đường nhóm.
+# In other words: dynamics borrowed from the base curve, level taken from the group curve.
 #
-# Hằng số này phải là chỗ duy nhất quyết định điều đó. Trước đây hành vi này chỉ
-# đúng nhờ specs/hullwhite.json tình cờ bị ghi đè cùng một bộ số cho mọi khoá —
-# không có dòng code nào giữ, và một lần hiệu chỉnh lại theo tên nhóm là mất.
+# This constant must be the only place that decides this. The behaviour used to be correct
+# only because specs/hullwhite.json happened to be overwritten with the same numbers for
+# every key: no line of code enforced it, and one recalibration by group name would lose it.
 BASE_CURVE = 'FI_ZYC_VND_VBMA_Bond_FI'
 
 PRICING_CFG = PricingConfig(
@@ -97,7 +102,7 @@ PRICING_CFG = PricingConfig(
 )
 
 # ---------------------------------------------------------------------------
-# Đường cong và tham số, nạp một lần mỗi nhóm
+# Curves and parameters, loaded once per group
 # ---------------------------------------------------------------------------
 _curve_cache: dict = {}
 _params_cache: dict = {}
@@ -105,6 +110,7 @@ _ref_cache: dict = {}
 
 
 def _hw_params(name):
+    """Read ``(a, sigma)`` for ``name`` from specs/hullwhite.json, or raise if missing."""
     with open(HULLWHITE_FILE_PATH, 'r', encoding='utf-8') as f:
         p = json.load(f)
     for key in (name.lower(), name):
@@ -117,6 +123,18 @@ def _hw_params(name):
 
 
 def curve_of_group(group):
+    """
+    Return the issuer group's ZYC (LSCK) curve, cached after the first read.
+
+    Args:
+        group (str): Issuer group (TCPH) name, e.g. ``LB_G1``.
+
+    Returns:
+        pd.DataFrame: The bootstrapped zero curve ``FI_ZYC_VND_<group>.csv``.
+
+    Raises:
+        FileNotFoundError: If the curve has not been bootstrapped yet (run main_v2.py once).
+    """
     if group not in _curve_cache:
         path = Path(CURVE_FOLDER_PATH) / f"FI_ZYC_VND_{group}.csv"
         if not path.exists():
@@ -128,6 +146,15 @@ def curve_of_group(group):
 
 
 def ref_curve_df(name):
+    """
+    Return a reference-rate (LSTC) curve sorted by date, cached after the first read.
+
+    Args:
+        name (str): Reference curve name, i.e. the CSV file stem in CURVE_FOLDER_PATH.
+
+    Returns:
+        pd.DataFrame: The curve with a DatetimeIndex, sorted ascending.
+    """
     if name not in _ref_cache:
         df = pd.read_csv(os.path.join(CURVE_FOLDER_PATH, f'{name}.csv'), index_col=0)
         df.index = pd.to_datetime(df.index)
@@ -136,16 +163,26 @@ def ref_curve_df(name):
 
 
 def params_of_group(group, ref_curve_name=None):
-    """``ModelParams`` cho một nhóm, kèm chân tham chiếu nếu mã thả nổi.
+    """
+    Return ``ModelParams`` for a group, including the reference leg for a floating bond.
 
-    ``group`` KHÔNG tham gia xác định ``(a_r, sigma_r)``: cả hai lấy từ
-    :data:`BASE_CURVE`.  Tham số vẫn nhận ``group`` để chữ ký khỏi đánh lừa
-    người đọc rằng nhóm không liên quan gì — nhóm vẫn quyết định *đường cong*
-    chiết khấu, chỉ là không quyết định *động học*.
+    ``group`` does NOT determine ``(a_r, sigma_r)``: both come from :data:`BASE_CURVE`. The
+    function still takes ``group`` so the signature does not mislead the reader into thinking
+    the group is irrelevant: the group still decides the discount *curve*, just not the
+    *dynamics*.
 
-    ``rho`` đo giữa đường cơ bản và đường tham chiếu, đúng cặp nhân tố đang được
-    mô phỏng.  Khoá cache là cặp ``(group, ref_curve_name)`` để giữ chữ ký ổn
-    định, dù trên thực tế kết quả chỉ phụ thuộc vế sau.
+    ``rho`` is measured between the base curve and the reference curve, exactly the factor
+    pair being simulated. The cache key is ``(group, ref_curve_name)`` to keep the signature
+    stable, even though in practice the result depends only on the latter.
+
+    Args:
+        group (str): Issuer group (TCPH) name.
+        ref_curve_name (str | None): Reference-rate (LSTC) curve name, or None for a fixed-rate
+            bond.
+
+    Returns:
+        ModelParams: Hull-White parameters for the discount leg, plus ``a_L``, ``sigma_L`` and
+        ``rho`` when ``ref_curve_name`` is given.
     """
     key = (group, ref_curve_name)
     if key not in _params_cache:
@@ -154,7 +191,8 @@ def params_of_group(group, ref_curve_name=None):
             _params_cache[key] = ModelParams(a_r=a_r, sigma_r=sigma_r)
         else:
             a_L, sigma_L = _hw_params(ref_curve_name)
-            rho = float(calc_rho(CURVE_NAMES=[BASE_CURVE, ref_curve_name]).iloc[1, 0])
+            rho = float(calc_rho(CURVE_NAMES=[BASE_CURVE, ref_curve_name],
+                                 value_date=VALUE_DATE).iloc[1, 0])
             _params_cache[key] = ModelParams(a_r=a_r, sigma_r=sigma_r, a_L=a_L,
                                              sigma_L=sigma_L, rho=rho)
     return _params_cache[key]
@@ -162,7 +200,16 @@ def params_of_group(group, ref_curve_name=None):
 
 # ---------------------------------------------------------------------------
 def _bao_cao(nhan, prov, zero_eq, a_report, nhom):
-    """In bảng một dòng mỗi tháng, kèm phần bù zero tương đương tại kỳ báo cáo."""
+    """
+    Print the one-row-per-month table, plus the zero-equivalent spread at the report month.
+
+    Args:
+        nhan (str): Layer label used in the printed header (e.g. "OAS").
+        prov (pd.DataFrame): Provenance table, one row per month.
+        zero_eq (pd.DataFrame): Zero-equivalent spread table, months x tenors.
+        a_report (float): Mean-reversion speed used for the zero-equivalent conversion.
+        nhom (str): Issuer group that ``a_report`` was taken for.
+    """
     print(f"\n{nhan} theo tháng (bp, không gian x) — a báo cáo = {a_report:.4f} ({nhom})")
     bang = prov.assign(
         gia_tri_bp=(prov["delta"] * 1e4).round(1),
@@ -179,7 +226,24 @@ def _bao_cao(nhan, prov, zero_eq, a_report, nhom):
 
 
 def _chang(nhan, obs, bond_df, csd, hol, *, tien_to, since, base_delta_of=None):
-    """Một chặng hiệu chỉnh: dò -> gộp tháng -> ghi bốn file. Trả bảng chính."""
+    """
+    Run one calibration stage: solve per observation -> aggregate by month -> write 4 files.
+
+    Args:
+        nhan (str): Layer label for messages ("OAS" or the Tier-2 delta label).
+        obs (pd.DataFrame): Price observations for this layer.
+        bond_df (pd.DataFrame): Bond term sheet.
+        csd (pd.DataFrame): Coupon schedule built from ``bond_df``.
+        hol: Holiday calendar.
+        tien_to (str): File prefix in SPREAD_FOLDER_PATH (``nontier2_oas`` / ``tier2_spread``).
+        since (pd.Timestamp): First month of the table (T1); earlier observations stay in the
+            cache only.
+        base_delta_of (callable | None): ``(spec, obs_date) -> float`` giving the base shift
+            each observation is solved on top of (the OAS in stage 2); None means 0.
+
+    Returns:
+        pd.DataFrame: The main monthly table (``<tien_to>_monthly.csv``).
+    """
     calib = calibrate_all(
         obs, bond_df, csd, hol, PRICING_CFG,
         curve_of_group=curve_of_group,
@@ -198,9 +262,9 @@ def _chang(nhan, obs, bond_df, csd, hol, *, tien_to, since, base_delta_of=None):
     if not len(ok):
         raise ValueError(f"{nhan}: không quan sát nào dò được")
 
-    # Quan sát trước T1 vẫn nằm trong cache để đối chiếu, nhưng KHÔNG vào bảng.
-    # Với chặng 2, delta của chúng dò trên nền đường nhóm trần (tháng đó chưa có
-    # OAS) nên là một đại lượng KHÁC — đừng so với delta từ T1 trở đi.
+    # Observations before T1 stay in the cache for reconciliation but do NOT enter the table.
+    # In stage 2 their delta is solved on the bare group curve (no OAS for that month yet),
+    # so it is a DIFFERENT quantity: do not compare it with deltas from T1 onwards.
     ngoai = int((pd.to_datetime(ok["obs_date"]) < pd.Timestamp(since)).sum())
     if ngoai:
         print(f"  {ngoai}/{len(ok)} quan sát nằm trước T1 — giữ trong cache, "
@@ -219,7 +283,16 @@ def _chang(nhan, obs, bond_df, csd, hol, *, tien_to, since, base_delta_of=None):
 
 
 def main():
-    bond_df = pd.read_csv(os.path.join(BOND_FOLDER_PATH, 'bond placeholder.csv'))
+    """
+    Build the OAS table (stage 1) and then the Tier-2 delta table on top of it (stage 2).
+
+    Without non-Tier-2 observations, stage 1 is skipped and delta is solved on the bare group
+    curve, as before the layered architecture.
+
+    Returns:
+        int: Process exit code; 1 if there are no Tier-2 observations, else 0.
+    """
+    bond_df = pd.read_csv(os.path.join(BOND_FOLDER_PATH, 'term_sheet.csv'))
     validate_term_sheet(bond_df)
 
     obs_nt2 = load_price_obs(
@@ -241,8 +314,9 @@ def main():
     os.makedirs(SPREAD_FOLDER_PATH, exist_ok=True)
 
     if not len(obs_nt2):
-        # Chưa có tầng nền: chạy đúng như trước — delta dò thẳng trên đường nhóm,
-        # OAS coi như 0. Nói to chứ không im lặng, vì ý nghĩa của delta khác hẳn.
+        # No base layer yet: run exactly as before, delta solved directly on the group curve
+        # and OAS treated as 0. Said loudly, not silently, because delta then means something
+        # quite different.
         print("\n[!] nontier2_price_obs.csv chưa có dòng nào.")
         print("    Bỏ qua chặng OAS; delta tăng vốn dò trên đường nhóm trần như")
         print("    trước. Nạp giá trái phiếu không tăng vốn có quyền chọn để bật")
@@ -252,7 +326,7 @@ def main():
                tien_to='tier2_spread', since=since)
         return 0
 
-    # T1 — mốc chung, tính lại mỗi lần chạy từ dữ liệu và VALUE_DATE.
+    # T1: the common start, recomputed on every run from the data and VALUE_DATE.
     T1_day = common_start(obs_nt2, obs_t2, VALUE_DATE)
     T1 = pd.Timestamp(T1_day.year, T1_day.month, 1)
     print(f'T1 = {T1.date()} (tháng {pd.Period(T1, freq="M")}) — lần gần nhất cả hai tầng đều có quan sát')
@@ -268,7 +342,7 @@ def main():
                  tien_to='nontier2_oas', since=T1)
 
     def nen(spec, obs_date):
-        """Nền cho một quan sát tăng vốn: OAS của tháng quan sát, 0 nếu trước T1."""
+        """Return the base for a Tier-2 observation: that month's OAS, or 0 before T1."""
         if pd.Period(pd.Timestamp(obs_date), freq="M") not in oas.index:
             return 0.0
         return delta_for_bond(oas, obs_date, spec.maturity_date)

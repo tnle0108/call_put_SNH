@@ -1,6 +1,7 @@
 """Trinomial lattice geometry and branch probabilities on a non-uniform grid.
 
-Geometry follows :class:`src.hw_tree.HullWhiteTree`: ``dx`` is rebuilt for every
+Geometry follows the earlier engine's ``HullWhiteTree`` (``src/hw_tree.py``, removed; see git
+history): ``dx`` is rebuilt for every
 time level, ``dx_i = sqrt(3 V_i)``.  That is what keeps ``V_i / dx_i**2 = 1/3``
 whatever the step lengths are, so the probabilities stay in Hull's standard
 ``1/6, 2/3, 1/6`` form and are well conditioned even where the grid is uneven.
@@ -8,7 +9,7 @@ The price is that the meaning of a level index changes along the tree -- between
 two steps it rescales by ``sqrt(dt_i / dt_{i+1})`` -- so each time level keeps its
 own ``j_min`` / ``j_max`` and the value array changes width as the rollback walks.
 
-The joint probabilities follow :func:`src.multi_hw_tree.MultiCurveHWTree._build_joint_probs`
+The joint probabilities follow that engine's ``MultiCurveHWTree._build_joint_probs``
 (same correlation matrices and lambda scaling) but vectorised, and cached by the
 pair of adjacent step lengths in days rather than rebuilt per step.
 """

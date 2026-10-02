@@ -14,15 +14,37 @@ from callput import YieldCurve
 
 @dataclass
 class MapCurve:
-    # df: pd.DataFrame
+    """
+    A class to map a yield curve from a DataFrame of zero rates and a reference date.
+
+    Attributes:
+        rpd (pd.Timestamp): The reference date for the yield curve.
+        df (pd.DataFrame): A DataFrame containing zero rates, one row per date (the index) and
+            one column per tenor; the tenor is the part of the column name after the last '_'.
+        convention (str): The day count convention to use for calculating year fractions.
+    """
     rpd: pd.Timestamp
     df: pd.DataFrame
     convention: str
 
     def __post_init__(self):
+        """Normalise rpd to a pd.Timestamp."""
         self.rpd = pd.Timestamp(self.rpd)
-    
+
     def map_curve(self):
+        """
+        Build the YieldCurve in effect on rpd.
+
+        Each tenor (Y, M, W or ON) is rolled from rpd to a maturity date and converted to a year
+        fraction under the day count convention. The zero rates are taken from the latest row of
+        df dated on or before rpd; if every row is after rpd, the earliest row is used instead.
+
+        Returns:
+            YieldCurve: Curve built from the tenor year fractions and that row's zero rates.
+
+        Raises:
+            ValueError: If a column's tenor label is not supported.
+        """
 
         tenor_labels = [col.split("_")[-1] for col in self.df.columns]
         maturity_dates = []
